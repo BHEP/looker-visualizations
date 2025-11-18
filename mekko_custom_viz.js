@@ -10,11 +10,12 @@ looker.plugins.visualizations.add({
     // --- Data options ---
     valueMeasureField: {
       type: "string",
-      label: "Value Measure (field name)",
-      default: "notion_project_form.total_percent_of_time",
+      label: "Value Measure (optional - auto-detects if empty)",
+      default: "",
       display: "text",
       section: "Data",
-      order: 1
+      order: 1,
+      placeholder: "Leave empty to use first measure"
     },
     sortOrder: {
       type: "string",
@@ -266,13 +267,30 @@ looker.plugins.visualizations.add({
     }
 
     var xDim = queryResponse.fields.dimension_like[0];
-    var valueFieldName = this._getConfig(config, "valueMeasureField", "notion_project_form.total_percent_of_time");
-
-    var valueField = queryResponse.fields.measure_like.find(function(f) {
-      return f.name === valueFieldName;
-    });
+    
+    // Auto-detect measure field: use specified field or first available measure
+    var specifiedFieldName = this._getConfig(config, "valueMeasureField", "");
+    var valueField = null;
+    var valueFieldName = null;
+    
+    if (specifiedFieldName && specifiedFieldName.trim() !== "") {
+      // Use specified field if provided
+      valueField = queryResponse.fields.measure_like.find(function(f) {
+        return f.name === specifiedFieldName.trim();
+      });
+      if (valueField) {
+        valueFieldName = valueField.name;
+      }
+    }
+    
+    // If no field specified or not found, use first available measure
+    if (!valueField && queryResponse.fields.measure_like && queryResponse.fields.measure_like.length > 0) {
+      valueField = queryResponse.fields.measure_like[0];
+      valueFieldName = valueField.name;
+    }
+    
     if (!valueField) {
-      element.innerHTML = "Value measure field not found: " + valueFieldName;
+      element.innerHTML = "No measure field found. Please add a measure to your query.";
       done();
       return;
     }
