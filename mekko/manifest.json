@@ -1,0 +1,10 @@
+{
+  "name": "mekko",
+  "version": "1.0.0",
+  "label": "Mekko",
+  "description": "A custom stacked Mekko (Marimekko) chart visualization using Highcharts variwide. Displays proportional stacked columns where both column width and segment height represent data values.",
+  "author": "Aileen",
+  "main": "mekko_custom_viz.js",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTMgM0gyMVYyMUgzVjNaTTUgNUgxOVYxOUg1VjVaIiBmaWxsPSIjNjI2MjYyIi8+Cjwvc3ZnPgo="
+}
+
