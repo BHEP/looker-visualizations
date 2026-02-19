@@ -26,6 +26,22 @@ looker.plugins.visualizations.add({
       order: 2
     },
 
+    // --- Display ---
+    replaceZeroWithDash: {
+      type: "boolean",
+      label: "Replace 0 with \"-\"",
+      default: false,
+      section: "Display",
+      order: 5
+    },
+    freezeNonMeasureColumns: {
+      type: "boolean",
+      label: "Freeze non-measure columns (scroll to see pivoted values)",
+      default: false,
+      section: "Display",
+      order: 6
+    },
+
     // --- Grouping ---
     groupByDimension: {
       type: "string",
@@ -52,6 +68,27 @@ looker.plugins.visualizations.add({
       step: 4,
       section: "Grouping",
       order: 12
+    },
+
+    // --- Table total ---
+    showTableTotal: {
+      type: "boolean",
+      label: "Show table total",
+      default: false,
+      section: "Table total",
+      order: 20
+    },
+    tableTotalPosition: {
+      type: "string",
+      label: "Table total position",
+      display: "select",
+      values: [
+        { "top": "Top" },
+        { "bottom": "Bottom" }
+      ],
+      default: "bottom",
+      section: "Table total",
+      order: 21
     }
   },
 
@@ -100,11 +137,11 @@ looker.plugins.visualizations.add({
       return;
     }
 
-    // Dynamic "Group by" dropdown: list of dimensions
+    // Dynamic "Group by" dropdown: show column labels (not backend names); store backend name
     var groupByValues = [{ "": "No sections" }];
     dims.forEach(function (d) {
-      var label = d.label_short || d.label || d.name;
-      groupByValues.push({ [d.name]: label });
+      var displayLabel = d.label || d.label_short || d.name;
+      groupByValues.push({ [displayLabel]: d.name });
     });
     var newOptions = Object.assign({}, this.options);
     newOptions.groupByDimension = newOptions.groupByDimension || {};
@@ -117,12 +154,21 @@ looker.plugins.visualizations.add({
     var showSubTotals = !!self._getConfig(config, "showSubTotals", true);
     var sectionSpacing = Number(self._getConfig(config, "sectionSpacing", 24)) || 24;
     var headerColor = (self._getConfig(config, "pivotedHeaderColor", "#215C98") || "#215C98").trim();
+    var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", false);
+    var freezeNonMeasureColumns = !!self._getConfig(config, "freezeNonMeasureColumns", false);
+    var showTableTotal = !!self._getConfig(config, "showTableTotal", false);
+    var tableTotalPosition = self._getConfig(config, "tableTotalPosition", "bottom");
 
-    // Resolve group-by dimension
+    // Resolve group-by dimension (config may store backend name or display label)
     var groupDim = null;
     if (groupByField) {
       groupDim = dims.find(function (d) { return d.name === groupByField; });
-      if (!groupDim) groupDim = dims.find(function (d) { return d.label_short === groupByField || d.label === groupByField; });
+      if (!groupDim) {
+        groupDim = dims.find(function (d) {
+          var L = d.label || d.label_short || d.name;
+          return L === groupByField;
+        });
+      }
     }
 
     // Row label dimension: first dimension that isn't the group-by
@@ -181,7 +227,7 @@ looker.plugins.visualizations.add({
 
     // Build table DOM
     var table = document.createElement("table");
-    table.className = "grouped-tables-table";
+    table.className = "grouped-tables-table" + (freezeNonMeasureColumns ? " grouped-tables-frozen" : "");
     table.setAttribute("border", "0");
     table.setAttribute("cellpadding", "6");
     table.setAttribute("cellspacing", "0");
@@ -189,6 +235,9 @@ looker.plugins.visualizations.add({
     table.style.width = "100%";
     table.style.fontFamily = "inherit";
     table.style.fontSize = "14px";
+    if (freezeNonMeasureColumns) {
+      table.style.minWidth = "max-content";
+    }
 
     var thead = document.createElement("thead");
     var tbody = document.createElement("tbody");
@@ -196,83 +245,74 @@ looker.plugins.visualizations.add({
     var headerBg = headerColor;
     var headerFg = "#ffffff";
 
-    // Measure header row (optional): one cell per pivot column
-    if (showMeasureHeaders && pivotKeys.length) {
-      var measureRow = document.createElement("tr");
-      var thFirst = document.createElement("th");
-      thFirst.style.backgroundColor = headerBg;
-      thFirst.style.color = headerFg;
-      thFirst.style.textDecoration = "underline";
-      thFirst.style.textAlign = "left";
-      thFirst.style.fontWeight = "bold";
-      thFirst.style.border = "1px solid " + headerBg;
-      thFirst.style.padding = "8px";
-      thFirst.textContent = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
-      measureRow.appendChild(thFirst);
-
-      measures.forEach(function (measure) {
-        var keysForMeasure = pivotMeta.length
-          ? pivotKeys
-          : [measure.name];
-        keysForMeasure.forEach(function () {
-          var th = document.createElement("th");
-          th.style.backgroundColor = headerBg;
-          th.style.color = headerFg;
-          th.style.textDecoration = "underline";
-          th.style.textAlign = "center";
-          th.style.fontWeight = "bold";
-          th.style.border = "1px solid " + headerBg;
-          th.style.padding = "8px";
-          th.textContent = measureLabels[measure.name] || measure.name;
-          measureRow.appendChild(th);
-        });
-      });
-      thead.appendChild(measureRow);
+    function styleTh(el) {
+      el.style.backgroundColor = headerBg;
+      el.style.color = headerFg;
+      el.style.textDecoration = "underline";
+      el.style.fontWeight = "bold";
+      el.style.border = "1px solid " + headerBg;
+      el.style.padding = "8px";
     }
 
-    // Column header row: row label + pivot column names
-    var headerRow = document.createElement("tr");
-    var h0 = document.createElement("th");
-    h0.style.backgroundColor = headerBg;
-    h0.style.color = headerFg;
-    h0.style.textDecoration = "underline";
-    h0.style.textAlign = "left";
-    h0.style.fontWeight = "bold";
-    h0.style.border = "1px solid " + headerBg;
-    h0.style.padding = "8px";
-    h0.textContent = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
-    headerRow.appendChild(h0);
+    // --- Row 1 (top): Pivot column headers only — one cell per column, no combined text
+    var pivotHeaderRow = document.createElement("tr");
+    var pivotHeaderFirst = document.createElement("th");
+    styleTh(pivotHeaderFirst);
+    pivotHeaderFirst.style.textAlign = "left";
+    pivotHeaderFirst.textContent = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
+    pivotHeaderRow.appendChild(pivotHeaderFirst);
 
     if (pivotMeta.length) {
       measures.forEach(function () {
         pivotKeys.forEach(function (pk) {
           var th = document.createElement("th");
-          th.style.backgroundColor = headerBg;
-          th.style.color = headerFg;
-          th.style.textDecoration = "underline";
+          styleTh(th);
           th.style.textAlign = "center";
-          th.style.fontWeight = "bold";
-          th.style.border = "1px solid " + headerBg;
-          th.style.padding = "8px";
           th.textContent = pivotLabels[pk] || pk;
-          headerRow.appendChild(th);
+          pivotHeaderRow.appendChild(th);
         });
       });
     } else {
       measures.forEach(function (m) {
         var th = document.createElement("th");
-        th.style.backgroundColor = headerBg;
-        th.style.color = headerFg;
-        th.style.textDecoration = "underline";
+        styleTh(th);
         th.style.textAlign = "center";
-        th.style.fontWeight = "bold";
-        th.style.border = "1px solid " + headerBg;
-        th.style.padding = "8px";
         th.textContent = pivotLabels[m.name] || m.name;
-        headerRow.appendChild(th);
+        pivotHeaderRow.appendChild(th);
       });
     }
-    thead.appendChild(headerRow);
+    thead.appendChild(pivotHeaderRow);
+
+    // --- Row 2 (bottom of headers): Measure header — one cell per column
+    if (showMeasureHeaders) {
+      var measureRow = document.createElement("tr");
+      var measureFirst = document.createElement("th");
+      styleTh(measureFirst);
+      measureFirst.style.textAlign = "left";
+      measureFirst.textContent = ""; // empty so pivot row "Name" is the only label in first column
+      measureRow.appendChild(measureFirst);
+
+      if (pivotMeta.length) {
+        measures.forEach(function (measure) {
+          pivotKeys.forEach(function () {
+            var th = document.createElement("th");
+            styleTh(th);
+            th.style.textAlign = "center";
+            th.textContent = measureLabels[measure.name] || measure.name;
+            measureRow.appendChild(th);
+          });
+        });
+      } else {
+        measures.forEach(function (m) {
+          var th = document.createElement("th");
+          styleTh(th);
+          th.style.textAlign = "center";
+          th.textContent = measureLabels[m.name] || m.name;
+          measureRow.appendChild(th);
+        });
+      }
+      thead.appendChild(measureRow);
+    }
     table.appendChild(thead);
 
     function cellValue(row, measureName, pivotKey) {
@@ -286,8 +326,54 @@ looker.plugins.visualizations.add({
 
     function formatValue(val) {
       if (val == null || isNaN(val)) return "";
+      if (replaceZeroWithDash && Number(val) === 0) return "\u2013"; // en dash
       if (Number(val) === Math.floor(val)) return String(Math.floor(val));
       return Number(val).toFixed(1);
+    }
+
+    function makeTableTotalRow() {
+      var tr = document.createElement("tr");
+      var totalLabel = document.createElement("td");
+      totalLabel.style.fontWeight = "bold";
+      totalLabel.style.padding = "6px 8px";
+      totalLabel.style.borderTop = "1px solid #ccc";
+      totalLabel.style.borderBottom = "1px solid #eee";
+      totalLabel.textContent = "Total";
+      tr.appendChild(totalLabel);
+      if (pivotMeta.length) {
+        measures.forEach(function (measure) {
+          pivotKeys.forEach(function (pk) {
+            var sum = 0;
+            data.forEach(function (row) {
+              sum += cellValue(row, measure.name, pk);
+            });
+            var td = document.createElement("td");
+            td.style.fontWeight = "bold";
+            td.style.padding = "6px 8px";
+            td.style.textAlign = "right";
+            td.style.borderTop = "1px solid #ccc";
+            td.style.borderBottom = "1px solid #eee";
+            td.textContent = formatValue(sum);
+            tr.appendChild(td);
+          });
+        });
+      } else {
+        measures.forEach(function (m) {
+          var sum = 0;
+          data.forEach(function (row) {
+            sum += cellValue(row, m.name, m.name);
+          });
+          var td = document.createElement("td");
+          td.style.fontWeight = "bold";
+          td.style.padding = "6px 8px";
+          td.style.textAlign = "right";
+          td.style.borderTop = "1px solid #ccc";
+          td.style.borderBottom = "1px solid #eee";
+          td.textContent = formatValue(sum);
+          tr.appendChild(td);
+        });
+      }
+      return tr;
     }
 
     sections.forEach(function (section, sectionIndex) {
@@ -394,9 +480,36 @@ looker.plugins.visualizations.add({
       }
     });
 
+    if (showTableTotal) {
+      var tableTotalRow = makeTableTotalRow();
+      if (tableTotalPosition === "top") {
+        tbody.insertBefore(tableTotalRow, tbody.firstChild);
+      } else {
+        tbody.appendChild(tableTotalRow);
+      }
+    }
+
     table.appendChild(tbody);
     container.innerHTML = "";
     container.appendChild(table);
+    if (freezeNonMeasureColumns) {
+      var style = document.createElement("style");
+      style.textContent =
+        ".grouped-tables-frozen thead th:first-child," +
+        ".grouped-tables-frozen tbody td:first-child:not([colspan]) {" +
+        "position: sticky; left: 0; z-index: 1; background: #fff; box-shadow: 2px 0 4px rgba(0,0,0,0.08);" +
+        "}" +
+        ".grouped-tables-frozen thead th:first-child { z-index: 2; }";
+      container.appendChild(style);
+      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen thead th:first-child"), function (th) {
+        th.style.backgroundColor = headerColor;
+        th.style.minWidth = "10em";
+      });
+      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen tbody td:first-child:not([colspan])"), function (td) {
+        td.style.minWidth = "10em";
+        td.style.backgroundColor = "#fff";
+      });
+    }
     done();
   }
 });
