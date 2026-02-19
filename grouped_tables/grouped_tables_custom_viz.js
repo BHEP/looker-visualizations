@@ -191,13 +191,27 @@ looker.plugins.visualizations.add({
     // Row label dimension: first dimension that isn't the group-by
     var rowLabelDim = dims.find(function (d) { return d !== groupDim; }) || dims[0];
 
+    // Treat Looker null pivot values (e.g. "dimension___null" or key ending with ___null) as blank for display
+    function isNullPivotValue(val) {
+      if (val == null || String(val).trim() === "") return true;
+      var s = String(val).trim();
+      return s === "null" || s.indexOf("___null") >= 0 || s.toLowerCase().endsWith("___null");
+    }
+    function displayPivotLabel(keyOrLabel) {
+      if (keyOrLabel == null || keyOrLabel === "") return "";
+      var s = String(keyOrLabel).trim();
+      if (isNullPivotValue(s)) return "";
+      return s;
+    }
+
     // Pivot keys and labels (pivoted columns)
     var pivotKeys = [];
     var pivotLabels = {};
     if (pivotMeta.length) {
       pivotKeys = pivotMeta.map(function (p) { return p.key; });
       pivotMeta.forEach(function (p) {
-        pivotLabels[p.key] = p.is_total ? "Total" : (p.label_short || p.label || p.key);
+        var label = p.is_total ? "Total" : (p.label_short || p.label || p.key);
+        pivotLabels[p.key] = isNullPivotValue(label) ? "" : label;
       });
     } else {
       // No pivot: one "column" per measure
@@ -252,6 +266,7 @@ looker.plugins.visualizations.add({
       }
       if (raw == null || raw === "") return "";
       if (isMeasureOrNull(raw)) return "";
+      if (isNullPivotValue(raw)) return "";
       return String(raw).trim();
     }
     function groupConsecutiveBy(arr, fn) {
@@ -389,7 +404,7 @@ looker.plugins.visualizations.add({
             var th = document.createElement("th");
             styleTh(th);
             th.style.textAlign = "center";
-            th.textContent = pivotLabels[pk] || pk;
+            th.textContent = displayPivotLabel(pivotLabels[pk] || pk);
             pivotHeaderRow.appendChild(th);
           });
         });
