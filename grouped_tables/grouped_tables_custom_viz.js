@@ -212,7 +212,7 @@ looker.plugins.visualizations.add({
       var s = String(pk || "");
       for (var d = 0; d < PIVOT_DELIMITERS.length; d++) {
         var delim = PIVOT_DELIMITERS[d];
-        if (s.indexOf(dim) >= 0) {
+        if (s.indexOf(delim) >= 0) {
           var parts = s.split(delim).map(function (p) { return p.trim(); });
           if (parts.length >= 2) return parts;
         }
