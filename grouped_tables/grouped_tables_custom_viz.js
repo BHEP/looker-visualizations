@@ -89,6 +89,15 @@ looker.plugins.visualizations.add({
       default: "bottom",
       section: "Table total",
       order: 21
+    },
+    tableTotalLabel: {
+      type: "string",
+      label: "Table total label",
+      default: "Total",
+      display: "text",
+      section: "Table total",
+      order: 22,
+      placeholder: "Total"
     }
   },
 
@@ -151,7 +160,7 @@ looker.plugins.visualizations.add({
     this.trigger("registerOptions", newOptions);
 
     var groupByField = (self._getConfig(config, "groupByDimension", "__none__") || "").trim();
-    if (groupByField === "" || groupByField === "__none__") {
+    if (groupByField === "") {
       groupByField = dims.length >= 2 ? dims[0].name : "__none__";
       config.groupByDimension = groupByField;
     }
@@ -164,6 +173,7 @@ looker.plugins.visualizations.add({
     var showTableTotal = !!self._getConfig(config, "showTableTotal", false);
     var tableTotalPositionRaw = self._getConfig(config, "tableTotalPosition", "bottom") || self._getConfig(config, "table_total_position", "bottom");
     var tableTotalPosition = (String(tableTotalPositionRaw || "").toLowerCase().indexOf("top") >= 0) ? "top" : "bottom";
+    var tableTotalLabel = String(self._getConfig(config, "tableTotalLabel", "Total") || "Total").trim() || "Total";
 
     // Resolve group-by dimension (config may store backend name or display label)
     var groupDim = null;
@@ -216,14 +226,27 @@ looker.plugins.visualizations.add({
     });
     var pivotLevelCount = (middleIsMeasure && numLevels >= 3) ? 2 : (numLevels >= 2 ? Math.min(numLevels, 10) : 1);
     var hasHierarchicalPivots = pivotKeys.length > 0 && numLevels >= 2;
+    var measureNames = measures.map(function (m) { return m.name; });
+    function isMeasureOrNull(val) {
+      if (val == null || String(val).trim() === "") return true;
+      return measureNames.indexOf(String(val).trim()) >= 0;
+    }
     function getPivotPart(pk, levelIndex) {
       var parts = parsePivotKey(pk);
-      if (middleIsMeasure && parts.length >= 3) {
-        if (levelIndex === 0) return parts[0];
-        if (levelIndex === 1) return parts[2];
-        return parts[levelIndex];
+      var raw;
+      if (parts.length === 1) {
+        if (levelIndex === 0) return "";
+        raw = parts[0];
+      } else if (middleIsMeasure && parts.length >= 3) {
+        if (levelIndex === 0) raw = parts[0];
+        else if (levelIndex === 1) raw = parts[2];
+        else raw = parts[levelIndex];
+      } else {
+        raw = parts[levelIndex] != null ? parts[levelIndex] : (levelIndex === 0 ? "" : pk);
       }
-      return parts[levelIndex] != null ? parts[levelIndex] : pk;
+      if (raw == null || raw === "") return "";
+      if (isMeasureOrNull(raw)) return "";
+      return String(raw).trim();
     }
     function groupConsecutiveBy(arr, fn) {
       var groups = [];
@@ -369,7 +392,8 @@ looker.plugins.visualizations.add({
             var th = document.createElement("th");
             styleTh(th);
             th.style.textAlign = "center";
-            th.textContent = pivotLabels[pk] || pk;
+            var label = pivotLabels[pk] || pk;
+            th.textContent = isMeasureOrNull(label) ? "" : label;
             pivotHeaderRow.appendChild(th);
           });
         });
@@ -437,7 +461,7 @@ looker.plugins.visualizations.add({
       totalLabel.style.padding = (tableTotalSpacing + 6) + "px 8px " + (tableTotalSpacing + 6) + "px";
       totalLabel.style.borderTop = "2px solid #ccc";
       totalLabel.style.borderBottom = "1px solid #eee";
-      totalLabel.textContent = "Total";
+      totalLabel.textContent = tableTotalLabel;
       tr.appendChild(totalLabel);
       if (pivotMeta.length) {
         measures.forEach(function (measure) {
@@ -481,8 +505,13 @@ looker.plugins.visualizations.add({
         var spacerCell = document.createElement("td");
         spacerCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
         spacerCell.style.height = sectionSpacing + "px";
+        spacerCell.style.minHeight = sectionSpacing + "px";
         spacerCell.style.border = "none";
         spacerCell.style.background = "transparent";
+        spacerCell.style.padding = "0";
+        spacerCell.style.lineHeight = "0";
+        spacerCell.style.verticalAlign = "top";
+        spacerCell.innerHTML = "<div style=\"height:" + sectionSpacing + "px;min-height:" + sectionSpacing + "px;\"></div>";
         spacerRow.appendChild(spacerCell);
         tbody.appendChild(spacerRow);
       }
