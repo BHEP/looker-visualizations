@@ -129,7 +129,7 @@ looker.plugins.visualizations.add({
       this.create(element, config);
       container = element.querySelector(".grouped-tables-container");
     }
-
+    try {
     var dims = queryResponse.fields.dimension_like || [];
     var measures = queryResponse.fields.measure_like || [];
     var pivots = queryResponse.fields.pivots || [];
@@ -220,7 +220,11 @@ looker.plugins.visualizations.add({
       return [ s ];
     }
     var pivotKeyParts = pivotKeys.map(parsePivotKey);
-    var numLevels = pivotKeyParts.length ? Math.max.apply(null, pivotKeyParts.map(function (p) { return p.length; })) : 0;
+    var numLevels = 0;
+    if (pivotKeyParts.length > 0) {
+      var lengths = pivotKeyParts.map(function (p) { return p.length; });
+      numLevels = Math.max.apply(null, lengths);
+    }
     var middleIsMeasure = numLevels >= 3 && measures.some(function (m) {
       return pivotKeyParts.some(function (parts) { return parts[1] === m.name; });
     });
@@ -232,6 +236,7 @@ looker.plugins.visualizations.add({
       return measureNames.indexOf(String(val).trim()) >= 0;
     }
     function getPivotPart(pk, levelIndex) {
+      if (pk == null) return "";
       var parts = parsePivotKey(pk);
       var raw;
       if (parts.length === 1) {
@@ -330,6 +335,7 @@ looker.plugins.visualizations.add({
     if (hasHierarchicalPivots && pivotMeta.length) {
       // --- Traditional Looker-style: one header row per pivot level, then measure row
       function getPartTuple(pk, upToLevel) {
+        if (pk == null) return "";
         var parts = parsePivotKey(pk);
         if (middleIsMeasure && parts.length >= 3) {
           var out = [ parts[0] ];
@@ -392,8 +398,7 @@ looker.plugins.visualizations.add({
             var th = document.createElement("th");
             styleTh(th);
             th.style.textAlign = "center";
-            var label = pivotLabels[pk] || pk;
-            th.textContent = isMeasureOrNull(label) ? "" : label;
+            th.textContent = pivotLabels[pk] || pk;
             pivotHeaderRow.appendChild(th);
           });
         });
@@ -650,6 +655,9 @@ looker.plugins.visualizations.add({
       [].forEach.call(container.querySelectorAll(".grouped-tables-frozen .grouped-tables-section-header td"), function (td) {
         td.style.backgroundColor = "#fff";
       });
+    }
+    } catch (err) {
+      container.innerHTML = "<p style=\"padding:12px;color:#c00;\">Error: " + (err.message || String(err)) + "</p>";
     }
     done();
   }
