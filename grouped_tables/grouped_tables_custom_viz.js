@@ -207,13 +207,13 @@ looker.plugins.visualizations.add({
     }
 
     // Parse pivot key into levels (try multiple delimiters: | , en-dash, hyphen, colon)
-    var PIVOT_DELIMITERS = [ "|", "\u2013", "\u2014", " - ", " – ", " — ", "::", ":" ];
+    var PIVOT_DELIMITERS = [ "|FIELD|", "|", "\u2013", "\u2014", " - ", " – ", " — ", "::", ":" ];
     function parsePivotKey(pk) {
       var s = String(pk || "");
-      for (var d = 0; d < PIVOT_DELIMITERS.length; d++) {
-        var delim = PIVOT_DELIMITERS[d];
-        if (s.indexOf(delim) >= 0) {
-          var parts = s.split(delim).map(function (p) { return p.trim(); });
+      for (var i = 0; i < PIVOT_DELIMITERS.length; i++) {
+        var separator = PIVOT_DELIMITERS[i];
+        if (s.indexOf(separator) >= 0) {
+          var parts = s.split(separator).map(function (p) { return p.trim(); });
           if (parts.length >= 2) return parts;
         }
       }
@@ -330,10 +330,11 @@ looker.plugins.visualizations.add({
     }
 
     var rowLabelText = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
-    var numHeaderRows = 1 + (hasHierarchicalPivots ? pivotLevelCount : 0) + (showMeasureHeaders ? 1 : 0);
+    var numHeaderRowsHierarchical = 1 + pivotLevelCount;
+    var numHeaderRows = 1 + (hasHierarchicalPivots ? pivotLevelCount : 0) + (showMeasureHeaders && !hasHierarchicalPivots ? 1 : 0);
 
     if (hasHierarchicalPivots && pivotMeta.length) {
-      // --- Traditional Looker-style: one header row per pivot level, then measure row
+      // --- Two layers only: one header row per pivot dimension (Fund, portco). No measure row.
       function getPartTuple(pk, upToLevel) {
         if (pk == null) return "";
         var parts = parsePivotKey(pk);
@@ -348,9 +349,10 @@ looker.plugins.visualizations.add({
         var row = document.createElement("tr");
         if (level === 0) {
           var thFirst = document.createElement("th");
+          if (freezeNonMeasureColumns) thFirst.className = "grouped-tables-col-frozen";
           styleTh(thFirst);
           thFirst.style.textAlign = "left";
-          thFirst.rowSpan = numHeaderRows;
+          thFirst.rowSpan = numHeaderRowsHierarchical;
           thFirst.textContent = rowLabelText;
           row.appendChild(thFirst);
         }
@@ -369,23 +371,11 @@ looker.plugins.visualizations.add({
         });
         thead.appendChild(row);
       }
-      if (showMeasureHeaders) {
-        var measureRow = document.createElement("tr");
-        measures.forEach(function (measure) {
-          pivotKeys.forEach(function () {
-            var th = document.createElement("th");
-            styleTh(th);
-            th.style.textAlign = "center";
-            th.textContent = measureLabels[measure.name] || measure.name;
-            measureRow.appendChild(th);
-          });
-        });
-        thead.appendChild(measureRow);
-      }
     } else {
       // --- Single-level pivot headers (no "|" in keys)
       var pivotHeaderRow = document.createElement("tr");
       var pivotHeaderFirst = document.createElement("th");
+      if (freezeNonMeasureColumns) pivotHeaderFirst.className = "grouped-tables-col-frozen";
       styleTh(pivotHeaderFirst);
       pivotHeaderFirst.style.textAlign = "left";
       pivotHeaderFirst.rowSpan = numHeaderRows;
@@ -462,6 +452,7 @@ looker.plugins.visualizations.add({
       var tr = document.createElement("tr");
       tr.className = "grouped-tables-table-total-row";
       var totalLabel = document.createElement("td");
+      if (freezeNonMeasureColumns) totalLabel.className = "grouped-tables-col-frozen";
       totalLabel.style.fontWeight = "bold";
       totalLabel.style.padding = (tableTotalSpacing + 6) + "px 8px " + (tableTotalSpacing + 6) + "px";
       totalLabel.style.borderTop = "2px solid #ccc";
@@ -525,6 +516,7 @@ looker.plugins.visualizations.add({
         var sectionRow = document.createElement("tr");
         if (freezeNonMeasureColumns) sectionRow.className = "grouped-tables-section-header";
         var sectionCell = document.createElement("td");
+        if (freezeNonMeasureColumns) sectionCell.className = "grouped-tables-col-frozen";
         sectionCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
         sectionCell.style.fontWeight = "bold";
         sectionCell.style.textDecoration = "underline";
@@ -538,6 +530,7 @@ looker.plugins.visualizations.add({
       section.rows.forEach(function (row) {
         var tr = document.createElement("tr");
         var tdLabel = document.createElement("td");
+        if (freezeNonMeasureColumns) tdLabel.className = "grouped-tables-col-frozen";
         tdLabel.style.padding = "6px 8px";
         tdLabel.style.borderBottom = "1px solid #eee";
         tdLabel.textContent = getRowLabel(row);
@@ -570,6 +563,7 @@ looker.plugins.visualizations.add({
       if (showSubTotals && section.rows.length > 0) {
         var totalRow = document.createElement("tr");
         var totalLabel = document.createElement("td");
+        if (freezeNonMeasureColumns) totalLabel.className = "grouped-tables-col-frozen";
         totalLabel.style.fontWeight = "bold";
         totalLabel.style.padding = "6px 8px";
         totalLabel.style.borderTop = "1px solid #ccc";
@@ -635,20 +629,19 @@ looker.plugins.visualizations.add({
     if (freezeNonMeasureColumns) {
       var style = document.createElement("style");
       style.textContent =
-        ".grouped-tables-frozen thead th:first-child," +
-        ".grouped-tables-frozen tbody td:first-child:not([colspan]) {" +
+        ".grouped-tables-frozen .grouped-tables-col-frozen {" +
         "position: sticky; left: 0; z-index: 1; background: #fff; box-shadow: 2px 0 4px rgba(0,0,0,0.08);" +
         "}" +
-        ".grouped-tables-frozen thead th:first-child { z-index: 2; }" +
+        ".grouped-tables-frozen thead .grouped-tables-col-frozen { z-index: 2; }" +
         ".grouped-tables-frozen .grouped-tables-section-header td {" +
         "position: sticky; top: 0; z-index: 1; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.08);" +
         "}";
       container.appendChild(style);
-      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen thead th:first-child"), function (th) {
+      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen thead .grouped-tables-col-frozen"), function (th) {
         th.style.backgroundColor = headerColor;
         th.style.minWidth = "10em";
       });
-      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen tbody td:first-child:not([colspan])"), function (td) {
+      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen tbody .grouped-tables-col-frozen"), function (td) {
         td.style.minWidth = "10em";
         td.style.backgroundColor = "#fff";
       });
