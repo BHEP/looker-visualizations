@@ -30,14 +30,14 @@ looker.plugins.visualizations.add({
     replaceZeroWithDash: {
       type: "boolean",
       label: "Replace 0 with \"-\"",
-      default: false,
+      default: true,
       section: "Display",
       order: 5
     },
     freezeNonMeasureColumns: {
       type: "boolean",
       label: "Freeze non-measure columns (scroll to see pivoted values)",
-      default: false,
+      default: true,
       section: "Display",
       order: 6
     },
@@ -46,11 +46,11 @@ looker.plugins.visualizations.add({
     groupByDimension: {
       type: "string",
       label: "Group by (dimension for sections)",
-      default: "",
+      default: "__none__",
       display: "select",
       section: "Grouping",
       order: 10,
-      values: [{ "": "No sections" }]
+      values: [{ "No sections": "__none__" }]
     },
     showSubTotals: {
       type: "boolean",
@@ -137,8 +137,8 @@ looker.plugins.visualizations.add({
       return;
     }
 
-    // Dynamic "Group by" dropdown: show column labels (not backend names); store backend name
-    var groupByValues = [{ "": "No sections" }];
+    // Dynamic "Group by" dropdown: show column labels (not backend names); no blank option
+    var groupByValues = [{ "No sections": "__none__" }];
     dims.forEach(function (d) {
       var displayLabel = d.label || d.label_short || d.name;
       groupByValues.push({ [displayLabel]: d.name });
@@ -146,22 +146,28 @@ looker.plugins.visualizations.add({
     var newOptions = Object.assign({}, this.options);
     newOptions.groupByDimension = newOptions.groupByDimension || {};
     newOptions.groupByDimension.values = groupByValues;
+    newOptions.groupByDimension.default = dims.length >= 2 ? dims[0].name : "__none__";
     this.options = newOptions;
     this.trigger("registerOptions", newOptions);
 
-    var groupByField = (self._getConfig(config, "groupByDimension", "") || "").trim();
+    var groupByField = (self._getConfig(config, "groupByDimension", "__none__") || "").trim();
+    if (groupByField === "" || groupByField === "__none__") {
+      groupByField = dims.length >= 2 ? dims[0].name : "__none__";
+      config.groupByDimension = groupByField;
+    }
     var showMeasureHeaders = !!self._getConfig(config, "showMeasureHeaders", true);
     var showSubTotals = !!self._getConfig(config, "showSubTotals", true);
     var sectionSpacing = Number(self._getConfig(config, "sectionSpacing", 24)) || 24;
     var headerColor = (self._getConfig(config, "pivotedHeaderColor", "#215C98") || "#215C98").trim();
-    var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", false);
-    var freezeNonMeasureColumns = !!self._getConfig(config, "freezeNonMeasureColumns", false);
+    var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", true);
+    var freezeNonMeasureColumns = !!self._getConfig(config, "freezeNonMeasureColumns", true);
     var showTableTotal = !!self._getConfig(config, "showTableTotal", false);
-    var tableTotalPosition = self._getConfig(config, "tableTotalPosition", "bottom");
+    var tableTotalPositionRaw = self._getConfig(config, "tableTotalPosition", "bottom");
+    var tableTotalPosition = (typeof tableTotalPositionRaw === "string" && tableTotalPositionRaw.toLowerCase() === "top") ? "top" : "bottom";
 
     // Resolve group-by dimension (config may store backend name or display label)
     var groupDim = null;
-    if (groupByField) {
+    if (groupByField && groupByField !== "__none__") {
       groupDim = dims.find(function (d) { return d.name === groupByField; });
       if (!groupDim) {
         groupDim = dims.find(function (d) {
@@ -188,6 +194,30 @@ looker.plugins.visualizations.add({
       measures.forEach(function (m) {
         pivotLabels[m.name] = m.label_short || m.label || m.name;
       });
+    }
+
+    // Parse pivot keys for hierarchical headers (e.g. "IV|FIELD|Due Diligence" -> outer | measure? | inner)
+    var pivotKeyParts = pivotKeys.map(function (pk) { return pk.split("|"); });
+    var numLevels = pivotKeyParts.length ? pivotKeyParts[0].length : 0;
+    var middleIsMeasure = numLevels >= 3 && measures.some(function (m) { return pivotKeyParts[0][1] === m.name; });
+    var hasHierarchicalPivots = pivotKeys.length > 0 && numLevels >= 2;
+    function getPivotOuter(pk) { return (pk.split("|"))[0] || pk; }
+    function getPivotInner(pk) {
+      var parts = pk.split("|");
+      if (middleIsMeasure && parts.length >= 3) return parts[2];
+      if (parts.length >= 2) return parts[1];
+      return pk;
+    }
+    function groupConsecutiveBy(arr, fn) {
+      var groups = [];
+      var i = 0;
+      while (i < arr.length) {
+        var val = fn(arr[i]);
+        var count = 0;
+        while (i < arr.length && fn(arr[i]) === val) { count++; i++; }
+        groups.push({ value: val, count: count });
+      }
+      return groups;
     }
 
     // Measure labels for measure header row
@@ -254,45 +284,46 @@ looker.plugins.visualizations.add({
       el.style.padding = "8px";
     }
 
-    // --- Row 1 (top): Pivot column headers only — one cell per column, no combined text
-    var pivotHeaderRow = document.createElement("tr");
-    var pivotHeaderFirst = document.createElement("th");
-    styleTh(pivotHeaderFirst);
-    pivotHeaderFirst.style.textAlign = "left";
-    pivotHeaderFirst.textContent = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
-    pivotHeaderRow.appendChild(pivotHeaderFirst);
+    var rowLabelText = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
+    var numHeaderRows = 1 + (hasHierarchicalPivots ? 1 : 0) + (showMeasureHeaders ? 1 : 0);
 
-    if (pivotMeta.length) {
+    if (hasHierarchicalPivots && pivotMeta.length) {
+      // --- Hierarchical pivot headers: one row per level, then measure row
+      var outerGroups = groupConsecutiveBy(pivotKeys, getPivotOuter);
+      // Row 1: outer pivot level (with colspans)
+      var row1 = document.createElement("tr");
+      var th1First = document.createElement("th");
+      styleTh(th1First);
+      th1First.style.textAlign = "left";
+      th1First.rowSpan = numHeaderRows;
+      th1First.textContent = rowLabelText;
+      row1.appendChild(th1First);
+      measures.forEach(function () {
+        outerGroups.forEach(function (g) {
+          var th = document.createElement("th");
+          styleTh(th);
+          th.style.textAlign = "center";
+          th.colSpan = g.count;
+          th.textContent = g.value;
+          row1.appendChild(th);
+        });
+      });
+      thead.appendChild(row1);
+      // Row 2: inner pivot level (one cell per column)
+      var row2 = document.createElement("tr");
       measures.forEach(function () {
         pivotKeys.forEach(function (pk) {
           var th = document.createElement("th");
           styleTh(th);
           th.style.textAlign = "center";
-          th.textContent = pivotLabels[pk] || pk;
-          pivotHeaderRow.appendChild(th);
+          th.textContent = getPivotInner(pk);
+          row2.appendChild(th);
         });
       });
-    } else {
-      measures.forEach(function (m) {
-        var th = document.createElement("th");
-        styleTh(th);
-        th.style.textAlign = "center";
-        th.textContent = pivotLabels[m.name] || m.name;
-        pivotHeaderRow.appendChild(th);
-      });
-    }
-    thead.appendChild(pivotHeaderRow);
-
-    // --- Row 2 (bottom of headers): Measure header — one cell per column
-    if (showMeasureHeaders) {
-      var measureRow = document.createElement("tr");
-      var measureFirst = document.createElement("th");
-      styleTh(measureFirst);
-      measureFirst.style.textAlign = "left";
-      measureFirst.textContent = ""; // empty so pivot row "Name" is the only label in first column
-      measureRow.appendChild(measureFirst);
-
-      if (pivotMeta.length) {
+      thead.appendChild(row2);
+      // Row 3 (optional): measure header
+      if (showMeasureHeaders) {
+        var measureRow = document.createElement("tr");
         measures.forEach(function (measure) {
           pivotKeys.forEach(function () {
             var th = document.createElement("th");
@@ -302,16 +333,52 @@ looker.plugins.visualizations.add({
             measureRow.appendChild(th);
           });
         });
+        thead.appendChild(measureRow);
+      }
+    } else {
+      // --- Single-level pivot headers (no "|" in keys)
+      var pivotHeaderRow = document.createElement("tr");
+      var pivotHeaderFirst = document.createElement("th");
+      styleTh(pivotHeaderFirst);
+      pivotHeaderFirst.style.textAlign = "left";
+      pivotHeaderFirst.rowSpan = numHeaderRows;
+      pivotHeaderFirst.textContent = rowLabelText;
+      pivotHeaderRow.appendChild(pivotHeaderFirst);
+
+      if (pivotMeta.length) {
+        measures.forEach(function () {
+          pivotKeys.forEach(function (pk) {
+            var th = document.createElement("th");
+            styleTh(th);
+            th.style.textAlign = "center";
+            th.textContent = pivotLabels[pk] || pk;
+            pivotHeaderRow.appendChild(th);
+          });
+        });
       } else {
         measures.forEach(function (m) {
           var th = document.createElement("th");
           styleTh(th);
           th.style.textAlign = "center";
-          th.textContent = measureLabels[m.name] || m.name;
-          measureRow.appendChild(th);
+          th.textContent = pivotLabels[m.name] || m.name;
+          pivotHeaderRow.appendChild(th);
         });
       }
-      thead.appendChild(measureRow);
+      thead.appendChild(pivotHeaderRow);
+
+      if (showMeasureHeaders) {
+        var measureRow = document.createElement("tr");
+        measures.forEach(function (measure) {
+          (pivotMeta.length ? pivotKeys : [measure.name]).forEach(function () {
+            var th = document.createElement("th");
+            styleTh(th);
+            th.style.textAlign = "center";
+            th.textContent = measureLabels[measure.name] || measure.name;
+            measureRow.appendChild(th);
+          });
+        });
+        thead.appendChild(measureRow);
+      }
     }
     table.appendChild(thead);
 
@@ -331,11 +398,13 @@ looker.plugins.visualizations.add({
       return Number(val).toFixed(1);
     }
 
+    var tableTotalSpacing = 16;
     function makeTableTotalRow() {
       var tr = document.createElement("tr");
+      tr.className = "grouped-tables-table-total-row";
       var totalLabel = document.createElement("td");
       totalLabel.style.fontWeight = "bold";
-      totalLabel.style.padding = "6px 8px";
+      totalLabel.style.padding = (tableTotalSpacing + 6) + "px 8px " + (tableTotalSpacing + 6) + "px";
       totalLabel.style.borderTop = "1px solid #ccc";
       totalLabel.style.borderBottom = "1px solid #eee";
       totalLabel.textContent = "Total";
@@ -349,7 +418,7 @@ looker.plugins.visualizations.add({
             });
             var td = document.createElement("td");
             td.style.fontWeight = "bold";
-            td.style.padding = "6px 8px";
+            td.style.padding = (tableTotalSpacing + 6) + "px 8px";
             td.style.textAlign = "right";
             td.style.borderTop = "1px solid #ccc";
             td.style.borderBottom = "1px solid #eee";
@@ -365,7 +434,7 @@ looker.plugins.visualizations.add({
           });
           var td = document.createElement("td");
           td.style.fontWeight = "bold";
-          td.style.padding = "6px 8px";
+          td.style.padding = (tableTotalSpacing + 6) + "px 8px";
           td.style.textAlign = "right";
           td.style.borderTop = "1px solid #ccc";
           td.style.borderBottom = "1px solid #eee";
@@ -390,6 +459,7 @@ looker.plugins.visualizations.add({
 
       if (groupDim && section.sectionLabel != null) {
         var sectionRow = document.createElement("tr");
+        if (freezeNonMeasureColumns) sectionRow.className = "grouped-tables-section-header";
         var sectionCell = document.createElement("td");
         sectionCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
         sectionCell.style.fontWeight = "bold";
@@ -499,7 +569,10 @@ looker.plugins.visualizations.add({
         ".grouped-tables-frozen tbody td:first-child:not([colspan]) {" +
         "position: sticky; left: 0; z-index: 1; background: #fff; box-shadow: 2px 0 4px rgba(0,0,0,0.08);" +
         "}" +
-        ".grouped-tables-frozen thead th:first-child { z-index: 2; }";
+        ".grouped-tables-frozen thead th:first-child { z-index: 2; }" +
+        ".grouped-tables-frozen .grouped-tables-section-header td {" +
+        "position: sticky; top: 0; z-index: 1; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.08);" +
+        "}";
       container.appendChild(style);
       [].forEach.call(container.querySelectorAll(".grouped-tables-frozen thead th:first-child"), function (th) {
         th.style.backgroundColor = headerColor;
@@ -507,6 +580,9 @@ looker.plugins.visualizations.add({
       });
       [].forEach.call(container.querySelectorAll(".grouped-tables-frozen tbody td:first-child:not([colspan])"), function (td) {
         td.style.minWidth = "10em";
+        td.style.backgroundColor = "#fff";
+      });
+      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen .grouped-tables-section-header td"), function (td) {
         td.style.backgroundColor = "#fff";
       });
     }
