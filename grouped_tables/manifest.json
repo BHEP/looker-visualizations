@@ -1,0 +1,9 @@
+{
+  "name": "grouped_tables",
+  "version": "1.0.0",
+  "label": "Grouped Tables",
+  "description": "A table with pivoted columns, optional measure headers, section grouping by a dimension, optional sub-totals per section, and spacing between sections. Header color is configurable.",
+  "author": "Aileen",
+  "main": "grouped_tables_custom_viz.js",
+  "icon": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTMgM0gyMVYyMUgzVjNaTTUgNUgxMVYxMUg1VjVaTTUgMTNIMTFWMTlINVYxM1pNMTMgNUgxOVYxMUgxM1Y1Wk0xMyAxM0gxOVYxOUgxM1YxM1oiIGZpbGw9IiMyMTVDOTgiLz4KPC9zdmc+"
+}
