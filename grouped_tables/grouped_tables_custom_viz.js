@@ -108,6 +108,7 @@ looker.plugins.visualizations.add({
     container.className = "grouped-tables-container";
     container.style.width = "100%";
     container.style.height = "100%";
+    container.style.minWidth = "0";
     container.style.overflow = "auto";
     element.appendChild(container);
   },
@@ -498,16 +499,22 @@ looker.plugins.visualizations.add({
     sections.forEach(function (section, sectionIndex) {
       if (sectionSpacing > 0 && sectionIndex > 0) {
         var spacerRow = document.createElement("tr");
+        spacerRow.style.height = sectionSpacing + "px";
+        spacerRow.style.lineHeight = "0";
+        spacerRow.style.fontSize = "0";
         var spacerCell = document.createElement("td");
         spacerCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
         spacerCell.style.height = sectionSpacing + "px";
         spacerCell.style.minHeight = sectionSpacing + "px";
+        spacerCell.style.maxHeight = sectionSpacing + "px";
         spacerCell.style.border = "none";
         spacerCell.style.background = "transparent";
         spacerCell.style.padding = "0";
         spacerCell.style.lineHeight = "0";
+        spacerCell.style.fontSize = "0";
+        spacerCell.style.overflow = "hidden";
         spacerCell.style.verticalAlign = "top";
-        spacerCell.innerHTML = "<div style=\"height:" + sectionSpacing + "px;min-height:" + sectionSpacing + "px;\"></div>";
+        spacerCell.innerHTML = "<div style=\"height:" + sectionSpacing + "px;min-height:" + sectionSpacing + "px;max-height:" + sectionSpacing + "px;overflow:hidden;\"></div>";
         spacerRow.appendChild(spacerCell);
         tbody.appendChild(spacerRow);
       }
@@ -625,28 +632,48 @@ looker.plugins.visualizations.add({
 
     table.appendChild(tbody);
     container.innerHTML = "";
-    container.appendChild(table);
+    if (freezeNonMeasureColumns) {
+      var scrollWrapper = document.createElement("div");
+      scrollWrapper.className = "grouped-tables-scroll-wrapper";
+      scrollWrapper.style.overflow = "auto";
+      scrollWrapper.style.width = "100%";
+      scrollWrapper.style.height = "100%";
+      scrollWrapper.style.minWidth = "0";
+      scrollWrapper.appendChild(table);
+      container.appendChild(scrollWrapper);
+    } else {
+      container.appendChild(table);
+    }
     if (freezeNonMeasureColumns) {
       var style = document.createElement("style");
       style.textContent =
+        ".grouped-tables-scroll-wrapper { -webkit-overflow-scrolling: touch; }" +
         ".grouped-tables-frozen .grouped-tables-col-frozen {" +
-        "position: sticky; left: 0; z-index: 1; background: #fff; box-shadow: 2px 0 4px rgba(0,0,0,0.08);" +
+        "position: sticky !important; left: 0 !important; z-index: 1; background: #fff !important; box-shadow: 2px 0 4px rgba(0,0,0,0.08); min-width: 10em;" +
         "}" +
         ".grouped-tables-frozen thead .grouped-tables-col-frozen { z-index: 2; }" +
         ".grouped-tables-frozen .grouped-tables-section-header td {" +
-        "position: sticky; top: 0; z-index: 1; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.08);" +
+        "position: sticky !important; top: 0 !important; z-index: 1; background: #fff !important; box-shadow: 0 2px 4px rgba(0,0,0,0.08);" +
         "}";
       container.appendChild(style);
       [].forEach.call(container.querySelectorAll(".grouped-tables-frozen thead .grouped-tables-col-frozen"), function (th) {
         th.style.backgroundColor = headerColor;
         th.style.minWidth = "10em";
+        th.style.position = "sticky";
+        th.style.left = "0";
+        th.style.zIndex = "2";
       });
       [].forEach.call(container.querySelectorAll(".grouped-tables-frozen tbody .grouped-tables-col-frozen"), function (td) {
         td.style.minWidth = "10em";
         td.style.backgroundColor = "#fff";
+        td.style.position = "sticky";
+        td.style.left = "0";
+        td.style.zIndex = "1";
       });
       [].forEach.call(container.querySelectorAll(".grouped-tables-frozen .grouped-tables-section-header td"), function (td) {
         td.style.backgroundColor = "#fff";
+        td.style.position = "sticky";
+        td.style.top = "0";
       });
     }
     } catch (err) {
