@@ -83,8 +83,8 @@ looker.plugins.visualizations.add({
       label: "Table total position",
       display: "select",
       values: [
-        { "top": "Top" },
-        { "bottom": "Bottom" }
+        { "Top": "top" },
+        { "Bottom": "bottom" }
       ],
       default: "bottom",
       section: "Table total",
@@ -162,8 +162,8 @@ looker.plugins.visualizations.add({
     var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", true);
     var freezeNonMeasureColumns = !!self._getConfig(config, "freezeNonMeasureColumns", true);
     var showTableTotal = !!self._getConfig(config, "showTableTotal", false);
-    var tableTotalPositionRaw = self._getConfig(config, "tableTotalPosition", "bottom");
-    var tableTotalPosition = (typeof tableTotalPositionRaw === "string" && tableTotalPositionRaw.toLowerCase() === "top") ? "top" : "bottom";
+    var tableTotalPositionRaw = self._getConfig(config, "tableTotalPosition", "bottom") || self._getConfig(config, "table_total_position", "bottom");
+    var tableTotalPosition = (String(tableTotalPositionRaw || "").toLowerCase().indexOf("top") >= 0) ? "top" : "bottom";
 
     // Resolve group-by dimension (config may store backend name or display label)
     var groupDim = null;
@@ -196,17 +196,34 @@ looker.plugins.visualizations.add({
       });
     }
 
-    // Parse pivot keys for hierarchical headers (e.g. "IV|FIELD|Due Diligence" -> outer | measure? | inner)
-    var pivotKeyParts = pivotKeys.map(function (pk) { return pk.split("|"); });
-    var numLevels = pivotKeyParts.length ? pivotKeyParts[0].length : 0;
-    var middleIsMeasure = numLevels >= 3 && measures.some(function (m) { return pivotKeyParts[0][1] === m.name; });
+    // Parse pivot key into levels (try multiple delimiters: | , en-dash, hyphen, colon)
+    var PIVOT_DELIMITERS = [ "|", "\u2013", "\u2014", " - ", " – ", " — ", "::", ":" ];
+    function parsePivotKey(pk) {
+      var s = String(pk || "");
+      for (var d = 0; d < PIVOT_DELIMITERS.length; d++) {
+        var delim = PIVOT_DELIMITERS[d];
+        if (s.indexOf(dim) >= 0) {
+          var parts = s.split(delim).map(function (p) { return p.trim(); });
+          if (parts.length >= 2) return parts;
+        }
+      }
+      return [ s ];
+    }
+    var pivotKeyParts = pivotKeys.map(parsePivotKey);
+    var numLevels = pivotKeyParts.length ? Math.max.apply(null, pivotKeyParts.map(function (p) { return p.length; })) : 0;
+    var middleIsMeasure = numLevels >= 3 && measures.some(function (m) {
+      return pivotKeyParts.some(function (parts) { return parts[1] === m.name; });
+    });
+    var pivotLevelCount = (middleIsMeasure && numLevels >= 3) ? 2 : (numLevels >= 2 ? Math.min(numLevels, 10) : 1);
     var hasHierarchicalPivots = pivotKeys.length > 0 && numLevels >= 2;
-    function getPivotOuter(pk) { return (pk.split("|"))[0] || pk; }
-    function getPivotInner(pk) {
-      var parts = pk.split("|");
-      if (middleIsMeasure && parts.length >= 3) return parts[2];
-      if (parts.length >= 2) return parts[1];
-      return pk;
+    function getPivotPart(pk, levelIndex) {
+      var parts = parsePivotKey(pk);
+      if (middleIsMeasure && parts.length >= 3) {
+        if (levelIndex === 0) return parts[0];
+        if (levelIndex === 1) return parts[2];
+        return parts[levelIndex];
+      }
+      return parts[levelIndex] != null ? parts[levelIndex] : pk;
     }
     function groupConsecutiveBy(arr, fn) {
       var groups = [];
@@ -285,43 +302,44 @@ looker.plugins.visualizations.add({
     }
 
     var rowLabelText = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
-    var numHeaderRows = 1 + (hasHierarchicalPivots ? 1 : 0) + (showMeasureHeaders ? 1 : 0);
+    var numHeaderRows = 1 + (hasHierarchicalPivots ? pivotLevelCount : 0) + (showMeasureHeaders ? 1 : 0);
 
     if (hasHierarchicalPivots && pivotMeta.length) {
-      // --- Hierarchical pivot headers: one row per level, then measure row
-      var outerGroups = groupConsecutiveBy(pivotKeys, getPivotOuter);
-      // Row 1: outer pivot level (with colspans)
-      var row1 = document.createElement("tr");
-      var th1First = document.createElement("th");
-      styleTh(th1First);
-      th1First.style.textAlign = "left";
-      th1First.rowSpan = numHeaderRows;
-      th1First.textContent = rowLabelText;
-      row1.appendChild(th1First);
-      measures.forEach(function () {
-        outerGroups.forEach(function (g) {
-          var th = document.createElement("th");
-          styleTh(th);
-          th.style.textAlign = "center";
-          th.colSpan = g.count;
-          th.textContent = g.value;
-          row1.appendChild(th);
+      // --- Traditional Looker-style: one header row per pivot level, then measure row
+      function getPartTuple(pk, upToLevel) {
+        var parts = parsePivotKey(pk);
+        if (middleIsMeasure && parts.length >= 3) {
+          var out = [ parts[0] ];
+          if (upToLevel >= 1) out.push(parts[2]);
+          return out.join("\0");
+        }
+        return parts.slice(0, upToLevel + 1).join("\0");
+      }
+      for (var level = 0; level < pivotLevelCount; level++) {
+        var row = document.createElement("tr");
+        if (level === 0) {
+          var thFirst = document.createElement("th");
+          styleTh(thFirst);
+          thFirst.style.textAlign = "left";
+          thFirst.rowSpan = numHeaderRows;
+          thFirst.textContent = rowLabelText;
+          row.appendChild(thFirst);
+        }
+        var groups = groupConsecutiveBy(pivotKeys, function (pk) { return getPartTuple(pk, level); });
+        measures.forEach(function () {
+          var keyIndex = 0;
+          groups.forEach(function (g) {
+            var th = document.createElement("th");
+            styleTh(th);
+            th.style.textAlign = "center";
+            th.colSpan = g.count;
+            th.textContent = getPivotPart(pivotKeys[keyIndex], level);
+            keyIndex += g.count;
+            row.appendChild(th);
+          });
         });
-      });
-      thead.appendChild(row1);
-      // Row 2: inner pivot level (one cell per column)
-      var row2 = document.createElement("tr");
-      measures.forEach(function () {
-        pivotKeys.forEach(function (pk) {
-          var th = document.createElement("th");
-          styleTh(th);
-          th.style.textAlign = "center";
-          th.textContent = getPivotInner(pk);
-          row2.appendChild(th);
-        });
-      });
-      thead.appendChild(row2);
-      // Row 3 (optional): measure header
+        thead.appendChild(row);
+      }
       if (showMeasureHeaders) {
         var measureRow = document.createElement("tr");
         measures.forEach(function (measure) {
@@ -398,14 +416,26 @@ looker.plugins.visualizations.add({
       return Number(val).toFixed(1);
     }
 
-    var tableTotalSpacing = 16;
+    var tableTotalSpacing = 24;
+    function makeSpacerRow() {
+      var tr = document.createElement("tr");
+      var spacerCell = document.createElement("td");
+      spacerCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
+      spacerCell.style.height = tableTotalSpacing + "px";
+      spacerCell.style.border = "none";
+      spacerCell.style.background = "transparent";
+      spacerCell.style.padding = "0";
+      spacerCell.style.lineHeight = "0";
+      tr.appendChild(spacerCell);
+      return tr;
+    }
     function makeTableTotalRow() {
       var tr = document.createElement("tr");
       tr.className = "grouped-tables-table-total-row";
       var totalLabel = document.createElement("td");
       totalLabel.style.fontWeight = "bold";
       totalLabel.style.padding = (tableTotalSpacing + 6) + "px 8px " + (tableTotalSpacing + 6) + "px";
-      totalLabel.style.borderTop = "1px solid #ccc";
+      totalLabel.style.borderTop = "2px solid #ccc";
       totalLabel.style.borderBottom = "1px solid #eee";
       totalLabel.textContent = "Total";
       tr.appendChild(totalLabel);
@@ -552,10 +582,16 @@ looker.plugins.visualizations.add({
 
     if (showTableTotal) {
       var tableTotalRow = makeTableTotalRow();
+      var spacerBefore = makeSpacerRow();
+      var spacerAfter = makeSpacerRow();
       if (tableTotalPosition === "top") {
+        tbody.insertBefore(spacerAfter, tbody.firstChild);
         tbody.insertBefore(tableTotalRow, tbody.firstChild);
+        tbody.insertBefore(spacerBefore, tbody.firstChild);
       } else {
+        tbody.appendChild(spacerBefore);
         tbody.appendChild(tableTotalRow);
+        tbody.appendChild(spacerAfter);
       }
     }
 
