@@ -76,7 +76,7 @@ looker.plugins.visualizations.add({
       display: "text",
       placeholder: "Examples: $#,##0.00, 0.0%, 0.000,, \"M\"",
       description: "Value format syntax docs: https://docs.cloud.google.com/looker/docs/custom-formatting?version=26.2&is_cloud_provider_native=false",
-      hidden: function (config) { return (config.valueFormatPreset || "__default__") !== "__custom__"; },
+      hidden: true,
       section: "Display",
       order: 5.6
     },
@@ -279,7 +279,7 @@ looker.plugins.visualizations.add({
     if (!dims.length)     { container.innerHTML = "<p>Add at least one dimension.</p>"; return; }
     if (!measures.length) { container.innerHTML = "<p>Add at least one measure.</p>";   return; }
 
-    self._registerGroupByOptions(dims);
+    self._registerDynamicOptions(config, dims);
     var cfg = self._resolveConfig(config, dims);
 
     var pivot       = self._analyzePivots(pivotMeta, measures, pivotFields);
@@ -403,7 +403,7 @@ looker.plugins.visualizations.add({
   // Config resolution
   // ---------------------------------------------------------------------------
 
-  _registerGroupByOptions: function (dims) {
+  _registerDynamicOptions: function (config, dims) {
     var self = this;
     var values = [{ "No sections": "__none__" }];
     dims.forEach(function (d) { values.push({ [self._fieldLabel(d, d.name)]: d.name }); });
@@ -411,6 +411,9 @@ looker.plugins.visualizations.add({
     opts.groupByDimension = Object.assign({}, opts.groupByDimension, {
       values: values,
       default: dims.length >= 2 ? dims[0].name : "__none__"
+    });
+    opts.customValueFormat = Object.assign({}, opts.customValueFormat, {
+      hidden: (String(config.valueFormatPreset || "__default__").trim()) !== "__custom__"
     });
     this.options = opts;
     this.trigger("registerOptions", opts);
