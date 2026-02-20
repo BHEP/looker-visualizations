@@ -210,8 +210,11 @@ looker.plugins.visualizations.add({
       }
     }
 
-    // Row label dimension: first dimension that isn't the group-by
-    var rowLabelDim = dims.find(function (d) { return d !== groupDim; }) || dims[0];
+    // Dimensions shown as row columns:
+    // - No sections: show all dimensions
+    // - Grouped: show all non-group dimensions (group dimension appears as section label)
+    var displayDims = groupDim ? dims.filter(function (d) { return d !== groupDim; }) : dims.slice();
+    if (!displayDims.length) displayDims = [dims[0]];
 
     // Treat Looker null pivot values (e.g. "dimension___null" or key ending with ___null) as blank for display
     function isNullPivotValue(val) {
@@ -308,8 +311,9 @@ looker.plugins.visualizations.add({
     measures.forEach(function (m) {
       measureLabels[m.name] = m.label_short || m.label || m.name;
     });
+    var dimensionColumnCount = displayDims.length;
     var valueColumnCount = pivotMeta.length ? measures.length * pivotKeys.length : measures.length;
-    var totalColumnCount = 1 + valueColumnCount;
+    var totalColumnCount = dimensionColumnCount + valueColumnCount;
     function forEachValueColumn(callback) {
       if (pivotMeta.length) {
         measures.forEach(function (measure) {
@@ -341,9 +345,8 @@ looker.plugins.visualizations.add({
       return getCellText(cell, "");
     }
 
-    function getRowLabel(row) {
-      var cell = row[rowLabelDim.name];
-      return getCellText(cell, "");
+    function getRowDimValue(row, dim) {
+      return getCellText(row[dim.name], "");
     }
 
     data.forEach(function (row) {
@@ -390,7 +393,17 @@ looker.plugins.visualizations.add({
       el.style.padding = "8px";
     }
 
-    var rowLabelText = getFieldLabel(rowLabelDim, "Row");
+    function appendDimensionHeaderCells(row, rowSpan) {
+      displayDims.forEach(function (dim, idx) {
+        var th = document.createElement("th");
+        if (freezeNonMeasureColumns && idx === 0) th.className = "grouped-tables-col-frozen";
+        styleTh(th);
+        th.style.textAlign = "left";
+        th.rowSpan = rowSpan;
+        th.textContent = getFieldLabel(dim, "Row");
+        row.appendChild(th);
+      });
+    }
     var numHeaderRowsHierarchical = 1 + pivotLevelCount;
     var numHeaderRows = 1 + (hasHierarchicalPivots ? pivotLevelCount : 0) + (showMeasureHeaders && !hasHierarchicalPivots ? 1 : 0);
 
@@ -409,13 +422,7 @@ looker.plugins.visualizations.add({
       for (var level = 0; level < pivotLevelCount; level++) {
         var row = document.createElement("tr");
         if (level === 0) {
-          var thFirst = document.createElement("th");
-          if (freezeNonMeasureColumns) thFirst.className = "grouped-tables-col-frozen";
-          styleTh(thFirst);
-          thFirst.style.textAlign = "left";
-          thFirst.rowSpan = numHeaderRowsHierarchical;
-          thFirst.textContent = rowLabelText;
-          row.appendChild(thFirst);
+          appendDimensionHeaderCells(row, numHeaderRowsHierarchical);
         }
         var groups = groupConsecutiveBy(pivotKeys, function (pk) { return getPartTuple(pk, level); });
         measures.forEach(function () {
@@ -435,13 +442,7 @@ looker.plugins.visualizations.add({
     } else {
       // --- Single-level pivot headers (no "|" in keys)
       var pivotHeaderRow = document.createElement("tr");
-      var pivotHeaderFirst = document.createElement("th");
-      if (freezeNonMeasureColumns) pivotHeaderFirst.className = "grouped-tables-col-frozen";
-      styleTh(pivotHeaderFirst);
-      pivotHeaderFirst.style.textAlign = "left";
-      pivotHeaderFirst.rowSpan = numHeaderRows;
-      pivotHeaderFirst.textContent = rowLabelText;
-      pivotHeaderRow.appendChild(pivotHeaderFirst);
+      appendDimensionHeaderCells(pivotHeaderRow, numHeaderRows);
 
       if (pivotMeta.length) {
         forEachValueColumn(function (_measure, pk) {
@@ -510,6 +511,7 @@ looker.plugins.visualizations.add({
       tr.className = "grouped-tables-table-total-row";
       var totalLabel = document.createElement("td");
       if (freezeNonMeasureColumns) totalLabel.className = "grouped-tables-col-frozen";
+      totalLabel.colSpan = dimensionColumnCount;
       totalLabel.style.fontWeight = "bold";
       totalLabel.style.padding = (tableTotalSpacing + 6) + "px 8px " + (tableTotalSpacing + 6) + "px";
       totalLabel.style.borderTop = "2px solid #ccc";
@@ -557,15 +559,16 @@ looker.plugins.visualizations.add({
         if (freezeNonMeasureColumns) sectionRow.className = "grouped-tables-section-header";
         var sectionCell = document.createElement("td");
         sectionCell.className = "grouped-tables-section-label" + (freezeNonMeasureColumns ? " grouped-tables-col-frozen" : "");
+        sectionCell.colSpan = dimensionColumnCount;
         sectionCell.style.fontWeight = "bold";
         sectionCell.style.textDecoration = "underline";
         sectionCell.style.padding = "8px 6px 4px 6px";
         sectionCell.style.borderBottom = "1px solid #ccc";
         sectionCell.textContent = section.sectionLabel;
         sectionRow.appendChild(sectionCell);
-        if (totalColumnCount > 1) {
+        if (valueColumnCount > 0) {
           var fillerCell = document.createElement("td");
-          fillerCell.colSpan = totalColumnCount - 1;
+          fillerCell.colSpan = valueColumnCount;
           fillerCell.style.borderBottom = "1px solid #ccc";
           fillerCell.style.padding = "0";
           fillerCell.style.background = "transparent";
@@ -576,12 +579,14 @@ looker.plugins.visualizations.add({
 
       section.rows.forEach(function (row) {
         var tr = document.createElement("tr");
-        var tdLabel = document.createElement("td");
-        if (freezeNonMeasureColumns) tdLabel.className = "grouped-tables-col-frozen";
-        tdLabel.style.padding = "6px 8px";
-        tdLabel.style.borderBottom = "1px solid #eee";
-        tdLabel.textContent = getRowLabel(row);
-        tr.appendChild(tdLabel);
+        displayDims.forEach(function (dim, idx) {
+          var tdLabel = document.createElement("td");
+          if (freezeNonMeasureColumns && idx === 0) tdLabel.className = "grouped-tables-col-frozen";
+          tdLabel.style.padding = "6px 8px";
+          tdLabel.style.borderBottom = "1px solid #eee";
+          tdLabel.textContent = getRowDimValue(row, dim);
+          tr.appendChild(tdLabel);
+        });
 
         forEachValueColumn(function (measure, pk) {
           var td = document.createElement("td");
@@ -598,6 +603,7 @@ looker.plugins.visualizations.add({
         var totalRow = document.createElement("tr");
         var totalLabel = document.createElement("td");
         if (freezeNonMeasureColumns) totalLabel.className = "grouped-tables-col-frozen";
+        totalLabel.colSpan = dimensionColumnCount;
         totalLabel.style.fontWeight = "bold";
         totalLabel.style.padding = "6px 8px";
         totalLabel.style.borderTop = "1px solid #ccc";
