@@ -9,7 +9,6 @@ looker.plugins.visualizations.add({
   label: "Grouped Tables",
 
   options: {
-    // --- Header style ---
     pivotedHeaderColor: {
       type: "string",
       label: "Pivoted column header color",
@@ -29,19 +28,14 @@ looker.plugins.visualizations.add({
       type: "string",
       label: "Pivot header alignment",
       display: "select",
-      values: [
-        { "Left": "left" },
-        { "Center": "center" }
-      ],
+      values: [{ "Left": "left" }, { "Center": "center" }],
       default: "left",
       section: "Header",
       order: 3
     },
-
-    // --- Display ---
     replaceZeroWithDash: {
       type: "boolean",
-      label: "Replace 0 with \"-\"",
+      label: "Replace 0 with \u201c\u2013\u201d",
       default: true,
       section: "Display",
       order: 5
@@ -53,8 +47,6 @@ looker.plugins.visualizations.add({
       section: "Display",
       order: 6
     },
-
-    // --- Grouping ---
     groupByDimension: {
       type: "string",
       label: "Group by (dimension for sections)",
@@ -78,8 +70,6 @@ looker.plugins.visualizations.add({
       section: "Grouping",
       order: 12
     },
-
-    // --- Table total ---
     showTableTotal: {
       type: "boolean",
       label: "Show table total",
@@ -91,10 +81,7 @@ looker.plugins.visualizations.add({
       type: "string",
       label: "Table total position",
       display: "select",
-      values: [
-        { "Top": "top" },
-        { "Bottom": "bottom" }
-      ],
+      values: [{ "Top": "top" }, { "Bottom": "bottom" }],
       default: "bottom",
       section: "Table total",
       order: 21
@@ -110,600 +97,563 @@ looker.plugins.visualizations.add({
     }
   },
 
-  create: function (element, config) {
-    this._element = element;
+  create: function (element) {
     element.innerHTML = "";
     var container = document.createElement("div");
     container.className = "grouped-tables-container";
-    container.style.width = "100%";
-    container.style.height = "100%";
-    container.style.minWidth = "0";
-    container.style.overflow = "auto";
+    Object.assign(container.style, { width: "100%", height: "100%", minWidth: "0", overflow: "auto" });
     element.appendChild(container);
   },
 
-  _getConfig: function (config, key, defaultValue) {
-    return config[key] !== undefined ? config[key] : defaultValue;
+  // ---------------------------------------------------------------------------
+  // Helpers (stateless)
+  // ---------------------------------------------------------------------------
+
+  _cfg: function (config, key, fallback) {
+    return config[key] !== undefined ? config[key] : fallback;
   },
 
-  _getNumericValue: function (measureObj) {
-    if (!measureObj) return 0;
-    var val = Number(measureObj.value);
-    return isFinite(val) ? val : 0;
+  _num: function (obj) {
+    if (!obj) return 0;
+    var v = Number(obj.value);
+    return isFinite(v) ? v : 0;
   },
 
-  updateAsync: function (data, element, config, queryResponse, details, done) {
+  _fieldLabel: function (field, fallback) {
+    if (!field) return fallback;
+    var l = String(field.label_short || field.label || field.name || fallback || "").trim();
+    return l || fallback;
+  },
+
+  _cellText: function (cell, fallback) {
+    if (!cell) return fallback || "";
+    var v = (cell.rendered != null && cell.rendered !== "") ? cell.rendered : cell.value;
+    return (v == null || String(v).trim() === "") ? (fallback || "") : String(v);
+  },
+
+  _isNullPivot: function (val) {
+    if (val == null) return true;
+    var s = String(val).trim();
+    return s === "" || s === "null" || s.indexOf("___null") >= 0;
+  },
+
+  // ---------------------------------------------------------------------------
+  // Main render
+  // ---------------------------------------------------------------------------
+
+  updateAsync: function (data, element, config, queryResponse, _details, done) {
     var self = this;
     var container = element.querySelector(".grouped-tables-container");
-    if (!container) {
-      this.create(element, config);
-      container = element.querySelector(".grouped-tables-container");
-    }
+    if (!container) { this.create(element); container = element.querySelector(".grouped-tables-container"); }
+
     try {
-    var dims = queryResponse.fields.dimension_like || [];
-    var measures = queryResponse.fields.measure_like || [];
-    var pivots = queryResponse.fields.pivots || [];
-    var pivotMeta = queryResponse.pivots || [];
+      self._render(data, config, queryResponse, container);
+    } catch (err) {
+      container.innerHTML = "<p style='padding:12px;color:#c00;'>Error: " + (err.message || err) + "</p>";
+    }
+    done();
+  },
 
-    if (!dims.length) {
-      container.innerHTML = "<p>Add at least one dimension.</p>";
-      done();
-      return;
-    }
-    if (!measures.length) {
-      container.innerHTML = "<p>Add at least one measure.</p>";
-      done();
-      return;
-    }
+  _render: function (data, config, qr, container) {
+    var self = this;
+    var dims     = qr.fields.dimension_like || [];
+    var measures  = qr.fields.measure_like  || [];
+    var pivotMeta = qr.pivots || [];
 
-    function normalizeHeaderColor(value, fallback) {
-      var s = String(value || "").trim();
-      return s ? s : fallback;
-    }
-    function normalizeHeaderAlignment(value, fallback) {
-      var s = String(value || fallback || "").toLowerCase().trim();
-      return s === "center" ? "center" : "left";
-    }
-    function getFieldLabel(field, fallback) {
-      if (!field) return fallback;
-      var label = field.label_short || field.label || field.name || fallback;
-      label = String(label == null ? "" : label).trim();
-      return label || fallback;
-    }
-    function getCellText(cell, fallback) {
-      if (!cell) return fallback || "";
-      var value = cell.rendered != null && cell.rendered !== "" ? cell.rendered : cell.value;
-      if (value == null || String(value).trim() === "") return fallback || "";
-      return String(value);
-    }
+    if (!dims.length)     { container.innerHTML = "<p>Add at least one dimension.</p>"; return; }
+    if (!measures.length) { container.innerHTML = "<p>Add at least one measure.</p>";   return; }
 
-    // Dynamic "Group by" dropdown: show column labels (not backend names); no blank option
-    var groupByValues = [{ "No sections": "__none__" }];
-    dims.forEach(function (d) {
-      var displayLabel = getFieldLabel(d, d.name);
-      groupByValues.push({ [displayLabel]: d.name });
-    });
-    var newOptions = Object.assign({}, this.options);
-    newOptions.groupByDimension = newOptions.groupByDimension || {};
-    newOptions.groupByDimension.values = groupByValues;
-    newOptions.groupByDimension.default = dims.length >= 2 ? dims[0].name : "__none__";
-    this.options = newOptions;
-    this.trigger("registerOptions", newOptions);
+    // --- Config -----------------------------------------------------------------
+    self._registerGroupByOptions(dims);
 
-    var groupByField = (self._getConfig(config, "groupByDimension", "__none__") || "").trim();
-    if (groupByField === "") {
-      groupByField = dims.length >= 2 ? dims[0].name : "__none__";
-      config.groupByDimension = groupByField;
-    }
-    var showMeasureHeaders = !!self._getConfig(config, "showMeasureHeaders", true);
-    var showSubTotals = !!self._getConfig(config, "showSubTotals", true);
-    var sectionSpacingRaw = Number(self._getConfig(config, "sectionSpacing", 24));
-    var sectionSpacing = isFinite(sectionSpacingRaw) ? Math.max(0, sectionSpacingRaw) : 24;
-    var headerColor = normalizeHeaderColor(self._getConfig(config, "pivotedHeaderColor", "#215C98"), "#215C98");
-    var pivotHeaderAlignment = normalizeHeaderAlignment(self._getConfig(config, "pivotHeaderAlignment", "left"), "left");
-    var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", true);
-    var freezeNonMeasureColumns = !!self._getConfig(config, "freezeNonMeasureColumns", true);
-    var showTableTotal = !!self._getConfig(config, "showTableTotal", false);
-    var tableTotalPositionRaw = self._getConfig(config, "tableTotalPosition", "bottom") || self._getConfig(config, "table_total_position", "bottom");
-    var tableTotalPosition = (String(tableTotalPositionRaw || "").toLowerCase().indexOf("top") >= 0) ? "top" : "bottom";
-    var tableTotalLabel = String(self._getConfig(config, "tableTotalLabel", "Total") || "Total").trim() || "Total";
+    var cfg = self._resolveConfig(config, dims, measures, pivotMeta);
 
-    // Resolve group-by dimension (config may store backend name or display label)
-    var groupDim = null;
-    if (groupByField && groupByField !== "__none__") {
-      groupDim = dims.find(function (d) { return d.name === groupByField; });
-      if (!groupDim) {
-        groupDim = dims.find(function (d) {
-          var L = getFieldLabel(d, d.name);
-          return L === groupByField;
-        });
-      }
-    }
+    // --- Pivot analysis ---------------------------------------------------------
+    var pivot = self._analyzePivots(pivotMeta, measures);
+    var pivotKeys   = pivot.keys;
+    var pivotLabels = pivot.labels;
 
-    // Dimensions shown as row columns:
-    // - No sections: show all dimensions
-    // - Grouped: show all non-group dimensions (group dimension appears as section label)
-    var displayDims = groupDim ? dims.filter(function (d) { return d !== groupDim; }) : dims.slice();
+    // --- Pivot hierarchy --------------------------------------------------------
+    var hierarchy = self._analyzeHierarchy(pivotKeys, measures);
+
+    // --- Layout counts ----------------------------------------------------------
+    var displayDims = cfg.groupDim
+      ? dims.filter(function (d) { return d !== cfg.groupDim; })
+      : dims.slice();
     if (!displayDims.length) displayDims = [dims[0]];
 
-    // Treat Looker null pivot values (e.g. "dimension___null" or key ending with ___null) as blank for display
-    function isNullPivotValue(val) {
-      if (val == null || String(val).trim() === "") return true;
-      var s = String(val).trim();
-      return s === "null" || s.indexOf("___null") >= 0 || s.toLowerCase().endsWith("___null");
-    }
-    function displayPivotLabel(keyOrLabel) {
-      if (keyOrLabel == null || keyOrLabel === "") return "";
-      var s = String(keyOrLabel).trim();
-      if (isNullPivotValue(s)) return "";
-      return s;
+    var dimColCount   = displayDims.length;
+    var valueColCount = pivotMeta.length ? measures.length * pivotKeys.length : measures.length;
+    var totalColCount = dimColCount + valueColCount;
+
+    // --- Iteration helper -------------------------------------------------------
+    function forEachValueCol(cb) {
+      if (pivotMeta.length) {
+        measures.forEach(function (m) { pivotKeys.forEach(function (pk) { cb(m, pk); }); });
+      } else {
+        measures.forEach(function (m) { cb(m, m.name); });
+      }
     }
 
-    // Pivot keys and labels (pivoted columns)
-    var pivotKeys = [];
-    var pivotLabels = {};
+    // --- Cell helpers -----------------------------------------------------------
+    function cellValue(row, mName, pk) {
+      var obj = pivotMeta.length ? (row[mName] && row[mName][pk]) : row[mName];
+      return self._num(obj);
+    }
+    function sumRows(rows, mName, pk) {
+      var s = 0; rows.forEach(function (r) { s += cellValue(r, mName, pk); }); return s;
+    }
+    function formatValue(val) {
+      if (val == null || isNaN(val)) return "";
+      if (cfg.replaceZero && Number(val) === 0) return "\u2013";
+      return Number(val) === Math.floor(val) ? String(Math.floor(val)) : Number(val).toFixed(1);
+    }
+
+    // --- Sections ---------------------------------------------------------------
+    var sections = self._buildSections(data, cfg.groupDim);
+
+    // --- DOM: table + thead + tbody ---------------------------------------------
+    var table = self._createTable(cfg.freeze);
+    var thead = document.createElement("thead");
+    var tbody = document.createElement("tbody");
+
+    var measureLabels = {};
+    measures.forEach(function (m) { measureLabels[m.name] = m.label_short || m.label || m.name; });
+
+    // --- Header -----------------------------------------------------------------
+    self._renderHeader(thead, {
+      displayDims: displayDims, measures: measures, pivotMeta: pivotMeta,
+      pivotKeys: pivotKeys, pivotLabels: pivotLabels,
+      hierarchy: hierarchy, measureLabels: measureLabels,
+      cfg: cfg, forEachValueCol: forEachValueCol
+    });
+    table.appendChild(thead);
+
+    // --- Body: sections ---------------------------------------------------------
+    sections.forEach(function (section, idx) {
+      if (cfg.sectionSpacing > 0 && idx > 0) {
+        tbody.appendChild(self._makeSpacerRow(totalColCount, cfg.sectionSpacing));
+      }
+      if (cfg.groupDim && section.label != null) {
+        tbody.appendChild(self._makeSectionHeaderRow(section.label, dimColCount, valueColCount, cfg.freeze));
+      }
+      section.rows.forEach(function (row) {
+        var tr = document.createElement("tr");
+        displayDims.forEach(function (dim, i) {
+          var td = self._td({ padding: "6px 8px", borderBottom: "1px solid #eee" });
+          if (cfg.freeze && i === 0) td.className = "grouped-tables-col-frozen";
+          td.textContent = self._cellText(row[dim.name], "");
+          tr.appendChild(td);
+        });
+        forEachValueCol(function (m, pk) {
+          var td = self._td({ padding: "6px 8px", textAlign: "right", borderBottom: "1px solid #eee" });
+          td.textContent = formatValue(cellValue(row, m.name, pk));
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      if (cfg.showSubTotals && section.rows.length > 0) {
+        tbody.appendChild(self._makeTotalRow("Total", section.rows, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue));
+      }
+    });
+
+    // --- Table total ------------------------------------------------------------
+    if (cfg.showTableTotal) {
+      var ttRow = self._makeTotalRow(cfg.tableTotalLabel, data, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue);
+      ttRow.className = "grouped-tables-table-total-row";
+      ttRow.firstChild.style.borderTop = "2px solid #ccc";
+      if (cfg.tableTotalPosition === "top") {
+        if (cfg.sectionSpacing > 0) tbody.insertBefore(self._makeSpacerRow(totalColCount, cfg.sectionSpacing), tbody.firstChild);
+        tbody.insertBefore(ttRow, tbody.firstChild);
+      } else {
+        if (cfg.sectionSpacing > 0) tbody.appendChild(self._makeSpacerRow(totalColCount, cfg.sectionSpacing));
+        tbody.appendChild(ttRow);
+      }
+    }
+
+    table.appendChild(tbody);
+
+    // --- Mount + freeze styling -------------------------------------------------
+    container.innerHTML = "";
+    if (cfg.freeze) {
+      container.style.overflow = "hidden";
+      var wrapper = document.createElement("div");
+      wrapper.className = "grouped-tables-scroll-wrapper";
+      Object.assign(wrapper.style, { overflow: "auto", width: "100%", height: "100%", minWidth: "0" });
+      wrapper.appendChild(table);
+      container.appendChild(wrapper);
+      container.appendChild(self._freezeStyleSheet(cfg.headerColor));
+    } else {
+      container.style.overflow = "auto";
+      container.appendChild(table);
+    }
+  },
+
+  // ---------------------------------------------------------------------------
+  // Config resolution
+  // ---------------------------------------------------------------------------
+
+  _registerGroupByOptions: function (dims) {
+    var self = this;
+    var values = [{ "No sections": "__none__" }];
+    dims.forEach(function (d) { values.push({ [self._fieldLabel(d, d.name)]: d.name }); });
+    var opts = Object.assign({}, this.options);
+    opts.groupByDimension = Object.assign({}, opts.groupByDimension, {
+      values: values,
+      default: dims.length >= 2 ? dims[0].name : "__none__"
+    });
+    this.options = opts;
+    this.trigger("registerOptions", opts);
+  },
+
+  _resolveConfig: function (config, dims, measures, pivotMeta) {
+    var self = this;
+    var c = function (k, d) { return self._cfg(config, k, d); };
+
+    var groupByField = (c("groupByDimension", "__none__") || "").trim();
+    if (groupByField === "") {
+      groupByField = dims.length >= 2 ? dims[0].name : "__none__";
+    }
+    var groupDim = null;
+    if (groupByField && groupByField !== "__none__") {
+      groupDim = dims.find(function (d) { return d.name === groupByField; })
+              || dims.find(function (d) { return self._fieldLabel(d, d.name) === groupByField; })
+              || null;
+    }
+
+    var posRaw = c("tableTotalPosition", "bottom") || c("table_total_position", "bottom");
+    var headerColor = String(c("pivotedHeaderColor", "#215C98") || "#215C98").trim() || "#215C98";
+    var alignRaw = String(c("pivotHeaderAlignment", "left") || "left").toLowerCase().trim();
+    var spacingRaw = Number(c("sectionSpacing", 24));
+
+    return {
+      groupDim: groupDim,
+      showMeasureHeaders: !!c("showMeasureHeaders", true),
+      showSubTotals:      !!c("showSubTotals", true),
+      sectionSpacing:     isFinite(spacingRaw) ? Math.max(0, spacingRaw) : 24,
+      headerColor:        headerColor,
+      pivotAlign:         alignRaw === "center" ? "center" : "left",
+      replaceZero:        !!c("replaceZeroWithDash", true),
+      freeze:             !!c("freezeNonMeasureColumns", true),
+      showTableTotal:     !!c("showTableTotal", false),
+      tableTotalPosition: String(posRaw || "").toLowerCase().indexOf("top") >= 0 ? "top" : "bottom",
+      tableTotalLabel:    String(c("tableTotalLabel", "Total") || "Total").trim() || "Total"
+    };
+  },
+
+  // ---------------------------------------------------------------------------
+  // Pivot analysis
+  // ---------------------------------------------------------------------------
+
+  _PIVOT_DELIMITERS: ["|FIELD|", "|", "\u2013", "\u2014", " - ", " \u2013 ", " \u2014 ", "::", ":"],
+
+  _parsePivotKey: function (pk) {
+    var s = String(pk || "");
+    var delims = this._PIVOT_DELIMITERS;
+    for (var i = 0; i < delims.length; i++) {
+      if (s.indexOf(delims[i]) >= 0) {
+        var parts = s.split(delims[i]).map(function (p) { return p.trim(); });
+        if (parts.length >= 2) return parts;
+      }
+    }
+    return [s];
+  },
+
+  _analyzePivots: function (pivotMeta, measures) {
+    var self = this;
+    var keys = [], labels = {};
     if (pivotMeta.length) {
-      pivotKeys = pivotMeta.map(function (p) { return p.key; });
+      keys = pivotMeta.map(function (p) { return p.key; });
       pivotMeta.forEach(function (p) {
-        var label = p.is_total ? "Total" : (p.label_short || p.label || p.key);
-        pivotLabels[p.key] = isNullPivotValue(label) ? "" : label;
+        var l = p.is_total ? "Total" : (p.label_short || p.label || p.key);
+        labels[p.key] = self._isNullPivot(l) ? "" : l;
       });
     } else {
-      // No pivot: one "column" per measure
-      pivotKeys = measures.map(function (m) { return m.name; });
-      measures.forEach(function (m) {
-        pivotLabels[m.name] = m.label_short || m.label || m.name;
-      });
+      keys = measures.map(function (m) { return m.name; });
+      measures.forEach(function (m) { labels[m.name] = m.label_short || m.label || m.name; });
     }
+    return { keys: keys, labels: labels };
+  },
 
-    // Parse pivot key into levels (try multiple delimiters: | , en-dash, hyphen, colon)
-    var PIVOT_DELIMITERS = [ "|FIELD|", "|", "\u2013", "\u2014", " - ", " – ", " — ", "::", ":" ];
-    function parsePivotKey(pk) {
-      var s = String(pk || "");
-      for (var i = 0; i < PIVOT_DELIMITERS.length; i++) {
-        var separator = PIVOT_DELIMITERS[i];
-        if (s.indexOf(separator) >= 0) {
-          var parts = s.split(separator).map(function (p) { return p.trim(); });
-          if (parts.length >= 2) return parts;
-        }
-      }
-      return [ s ];
-    }
-    var pivotKeyParts = pivotKeys.map(parsePivotKey);
-    var numLevels = 0;
-    if (pivotKeyParts.length > 0) {
-      var lengths = pivotKeyParts.map(function (p) { return p.length; });
-      numLevels = Math.max.apply(null, lengths);
-    }
-    var middleIsMeasure = numLevels >= 3 && measures.some(function (m) {
-      return pivotKeyParts.some(function (parts) { return parts[1] === m.name; });
-    });
-    var pivotLevelCount = (middleIsMeasure && numLevels >= 3) ? 2 : (numLevels >= 2 ? Math.min(numLevels, 10) : 1);
-    var hasHierarchicalPivots = pivotKeys.length > 0 && numLevels >= 2;
+  _analyzeHierarchy: function (pivotKeys, measures) {
+    var self = this;
+    var parts = pivotKeys.map(function (pk) { return self._parsePivotKey(pk); });
+    var numLevels = parts.length ? Math.max.apply(null, parts.map(function (p) { return p.length; })) : 0;
     var measureNames = measures.map(function (m) { return m.name; });
-    function isMeasureOrNull(val) {
+
+    var middleIsMeasure = numLevels >= 3 && measures.some(function (m) {
+      return parts.some(function (p) { return p[1] === m.name; });
+    });
+    var levelCount = middleIsMeasure && numLevels >= 3 ? 2 : (numLevels >= 2 ? Math.min(numLevels, 10) : 1);
+    var isHierarchical = pivotKeys.length > 0 && numLevels >= 2;
+
+    function isMeasureOrBlank(val) {
       if (val == null || String(val).trim() === "") return true;
       return measureNames.indexOf(String(val).trim()) >= 0;
     }
-    function getPivotPart(pk, levelIndex) {
+
+    function getPart(pk, level) {
       if (pk == null) return "";
-      var parts = parsePivotKey(pk);
+      var p = self._parsePivotKey(pk);
       var raw;
-      if (parts.length === 1) {
-        if (levelIndex === 0) return "";
-        raw = parts[0];
-      } else if (middleIsMeasure && parts.length >= 3) {
-        if (levelIndex === 0) raw = parts[0];
-        else if (levelIndex === 1) raw = parts[2];
-        else raw = parts[levelIndex];
+      if (p.length === 1) {
+        return level === 0 ? "" : (isMeasureOrBlank(p[0]) || self._isNullPivot(p[0]) ? "" : p[0]);
+      }
+      if (middleIsMeasure && p.length >= 3) {
+        raw = level === 0 ? p[0] : (level === 1 ? p[2] : p[level]);
       } else {
-        raw = parts[levelIndex] != null ? parts[levelIndex] : (levelIndex === 0 ? "" : pk);
+        raw = p[level] != null ? p[level] : (level === 0 ? "" : pk);
       }
       if (raw == null || raw === "") return "";
-      if (isMeasureOrNull(raw)) return "";
-      if (isNullPivotValue(raw)) return "";
+      if (isMeasureOrBlank(raw) || self._isNullPivot(raw)) return "";
       return String(raw).trim();
     }
-    function groupConsecutiveBy(arr, fn) {
-      var groups = [];
-      var i = 0;
+
+    function getTuple(pk, upToLevel) {
+      if (pk == null) return "";
+      var p = self._parsePivotKey(pk);
+      if (middleIsMeasure && p.length >= 3) {
+        var out = [p[0]];
+        if (upToLevel >= 1) out.push(p[2]);
+        return out.join("\0");
+      }
+      return p.slice(0, upToLevel + 1).join("\0");
+    }
+
+    function groupConsecutive(arr, fn) {
+      var groups = [], i = 0;
       while (i < arr.length) {
-        var val = fn(arr[i]);
-        var count = 0;
+        var val = fn(arr[i]), count = 0;
         while (i < arr.length && fn(arr[i]) === val) { count++; i++; }
         groups.push({ value: val, count: count });
       }
       return groups;
     }
 
-    // Measure labels for measure header row
-    var measureLabels = {};
-    measures.forEach(function (m) {
-      measureLabels[m.name] = m.label_short || m.label || m.name;
-    });
-    var dimensionColumnCount = displayDims.length;
-    var valueColumnCount = pivotMeta.length ? measures.length * pivotKeys.length : measures.length;
-    var totalColumnCount = dimensionColumnCount + valueColumnCount;
-    function forEachValueColumn(callback) {
-      if (pivotMeta.length) {
-        measures.forEach(function (measure) {
-          pivotKeys.forEach(function (pk) {
-            callback(measure, pk);
-          });
-        });
-        return;
-      }
-      measures.forEach(function (measure) {
-        callback(measure, measure.name);
-      });
-    }
-    function sumRows(rows, measureName, pivotKey) {
-      var sum = 0;
-      rows.forEach(function (row) {
-        sum += cellValue(row, measureName, pivotKey);
-      });
-      return sum;
-    }
+    return {
+      isHierarchical: isHierarchical,
+      levelCount: levelCount,
+      middleIsMeasure: middleIsMeasure,
+      getPart: getPart,
+      getTuple: getTuple,
+      groupConsecutive: groupConsecutive
+    };
+  },
 
-    // Build sections: array of { sectionLabel, rows: [row, ...] }
-    var sections = [];
-    var sectionMap = {};
+  // ---------------------------------------------------------------------------
+  // Section building
+  // ---------------------------------------------------------------------------
 
-    function getGroupKey(row) {
-      if (!groupDim) return null;
-      var cell = row[groupDim.name];
-      return getCellText(cell, "");
-    }
-
-    function getRowDimValue(row, dim) {
-      return getCellText(row[dim.name], "");
-    }
-
+  _buildSections: function (data, groupDim) {
+    if (!groupDim) return [{ label: null, rows: data }];
+    var self = this;
+    var sections = [], map = {};
     data.forEach(function (row) {
-      var gkey = getGroupKey(row);
-      if (!sectionMap[gkey]) {
-        sectionMap[gkey] = { sectionLabel: gkey || "(No section)", rows: [] };
-        sections.push(sectionMap[gkey]);
+      var key = self._cellText(row[groupDim.name], "");
+      if (!map[key]) {
+        map[key] = { label: key || "(No section)", rows: [] };
+        sections.push(map[key]);
       }
-      sectionMap[gkey].rows.push(row);
+      map[key].rows.push(row);
     });
+    return sections;
+  },
 
-    // If no grouping, one section with all rows
-    if (!groupDim) {
-      sections = [{ sectionLabel: null, rows: data }];
-    }
+  // ---------------------------------------------------------------------------
+  // DOM helpers
+  // ---------------------------------------------------------------------------
 
-    // Build table DOM
+  _td: function (styles) {
+    var td = document.createElement("td");
+    if (styles) Object.assign(td.style, styles);
+    return td;
+  },
+
+  _th: function (headerColor, styles) {
+    var th = document.createElement("th");
+    Object.assign(th.style, {
+      backgroundColor: headerColor,
+      color: "#ffffff",
+      textDecoration: "underline",
+      fontWeight: "bold",
+      border: "1px solid " + headerColor,
+      padding: "8px"
+    });
+    if (styles) Object.assign(th.style, styles);
+    return th;
+  },
+
+  _createTable: function (freeze) {
     var table = document.createElement("table");
-    table.className = "grouped-tables-table" + (freezeNonMeasureColumns ? " grouped-tables-frozen" : "");
+    table.className = "grouped-tables-table" + (freeze ? " grouped-tables-frozen" : "");
     table.setAttribute("border", "0");
     table.setAttribute("cellpadding", "6");
     table.setAttribute("cellspacing", "0");
-    table.style.borderCollapse = "collapse";
-    table.style.width = "100%";
-    table.style.tableLayout = "auto";
-    table.style.fontFamily = "inherit";
-    table.style.fontSize = "14px";
-    if (freezeNonMeasureColumns) {
-      table.style.minWidth = "max-content";
+    Object.assign(table.style, {
+      borderCollapse: "collapse",
+      width: "100%",
+      tableLayout: "auto",
+      fontFamily: "inherit",
+      fontSize: "14px"
+    });
+    if (freeze) table.style.minWidth = "max-content";
+    return table;
+  },
+
+  _makeSpacerRow: function (colCount, height) {
+    var tr = document.createElement("tr");
+    var td = this._td({
+      height: height + "px", border: "none", background: "transparent",
+      padding: "0", lineHeight: "0", fontSize: "0"
+    });
+    td.colSpan = colCount;
+    td.innerHTML = "<div style='display:block;height:" + height + "px'></div>";
+    tr.appendChild(td);
+    return tr;
+  },
+
+  _makeSectionHeaderRow: function (label, dimColCount, valueColCount, freeze) {
+    var tr = document.createElement("tr");
+    if (freeze) tr.className = "grouped-tables-section-header";
+    var td = this._td({
+      fontWeight: "bold", textDecoration: "underline",
+      padding: "8px 6px 4px 6px", borderBottom: "1px solid #ccc"
+    });
+    td.className = "grouped-tables-section-label" + (freeze ? " grouped-tables-col-frozen" : "");
+    td.colSpan = dimColCount;
+    td.textContent = label;
+    tr.appendChild(td);
+    if (valueColCount > 0) {
+      var filler = this._td({ borderBottom: "1px solid #ccc", padding: "0", background: "transparent" });
+      filler.colSpan = valueColCount;
+      tr.appendChild(filler);
     }
+    return tr;
+  },
 
-    var thead = document.createElement("thead");
-    var tbody = document.createElement("tbody");
+  _makeTotalRow: function (label, rows, dimColCount, freeze, forEachValueCol, sumRows, formatValue) {
+    var tr = document.createElement("tr");
+    var td = this._td({
+      fontWeight: "bold", padding: "6px 8px",
+      borderTop: "1px solid #ccc", borderBottom: "1px solid #eee"
+    });
+    if (freeze) td.className = "grouped-tables-col-frozen";
+    td.colSpan = dimColCount;
+    td.textContent = label;
+    tr.appendChild(td);
+    forEachValueCol(function (m, pk) {
+      var vtd = document.createElement("td");
+      Object.assign(vtd.style, {
+        fontWeight: "bold", padding: "6px 8px", textAlign: "right",
+        borderTop: "1px solid #ccc", borderBottom: "1px solid #eee"
+      });
+      vtd.textContent = formatValue(sumRows(rows, m.name, pk));
+      tr.appendChild(vtd);
+    });
+    return tr;
+  },
 
-    var headerBg = headerColor;
-    var headerFg = "#ffffff";
+  // ---------------------------------------------------------------------------
+  // Header rendering
+  // ---------------------------------------------------------------------------
 
-    function styleTh(el) {
-      el.style.backgroundColor = headerBg;
-      el.style.color = headerFg;
-      el.style.textDecoration = "underline";
-      el.style.fontWeight = "bold";
-      el.style.border = "1px solid " + headerBg;
-      el.style.padding = "8px";
-    }
+  _renderHeader: function (thead, ctx) {
+    var self = this;
+    var h    = ctx.hierarchy;
+    var cfg  = ctx.cfg;
 
-    function appendDimensionHeaderCells(row, rowSpan) {
-      displayDims.forEach(function (dim, idx) {
-        var th = document.createElement("th");
-        if (freezeNonMeasureColumns && idx === 0) th.className = "grouped-tables-col-frozen";
-        styleTh(th);
-        th.style.textAlign = "left";
+    function appendDimCells(row, rowSpan) {
+      ctx.displayDims.forEach(function (dim, i) {
+        var th = self._th(cfg.headerColor, { textAlign: "left" });
+        if (cfg.freeze && i === 0) th.className = "grouped-tables-col-frozen";
         th.rowSpan = rowSpan;
-        th.textContent = getFieldLabel(dim, "Row");
+        th.textContent = self._fieldLabel(dim, "Row");
         row.appendChild(th);
       });
     }
-    var numHeaderRowsHierarchical = 1 + pivotLevelCount + (showMeasureHeaders ? 1 : 0);
-    var numHeaderRows = 1 + (hasHierarchicalPivots ? pivotLevelCount : 0) + (showMeasureHeaders && !hasHierarchicalPivots ? 1 : 0);
 
-    if (hasHierarchicalPivots && pivotMeta.length) {
-      // --- Two layers only: one header row per pivot dimension (Fund, portco). No measure row.
-      function getPartTuple(pk, upToLevel) {
-        if (pk == null) return "";
-        var parts = parsePivotKey(pk);
-        if (middleIsMeasure && parts.length >= 3) {
-          var out = [ parts[0] ];
-          if (upToLevel >= 1) out.push(parts[2]);
-          return out.join("\0");
-        }
-        return parts.slice(0, upToLevel + 1).join("\0");
-      }
-      for (var level = 0; level < pivotLevelCount; level++) {
+    function appendMeasureRow() {
+      var mRow = document.createElement("tr");
+      ctx.forEachValueCol(function (m) {
+        var th = self._th(cfg.headerColor, { textAlign: "center" });
+        th.textContent = ctx.measureLabels[m.name] || m.name;
+        mRow.appendChild(th);
+      });
+      thead.appendChild(mRow);
+    }
+
+    function displayLabel(pk) {
+      var raw = ctx.pivotLabels[pk] || pk;
+      return self._isNullPivot(raw) ? "" : String(raw).trim();
+    }
+
+    if (h.isHierarchical && ctx.pivotMeta.length) {
+      var totalHeaderRows = 1 + h.levelCount + (cfg.showMeasureHeaders ? 1 : 0);
+      for (var level = 0; level < h.levelCount; level++) {
         var row = document.createElement("tr");
-        if (level === 0) {
-          appendDimensionHeaderCells(row, numHeaderRowsHierarchical);
-        }
-        var groups = groupConsecutiveBy(pivotKeys, function (pk) { return getPartTuple(pk, level); });
-        measures.forEach(function () {
-          var keyIndex = 0;
+        if (level === 0) appendDimCells(row, totalHeaderRows);
+        var groups = h.groupConsecutive(ctx.pivotKeys, function (pk) { return h.getTuple(pk, level); });
+        ctx.measures.forEach(function () {
+          var ki = 0;
           groups.forEach(function (g) {
-            var th = document.createElement("th");
-            styleTh(th);
-            th.style.textAlign = pivotHeaderAlignment;
+            var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
             th.colSpan = g.count;
-            th.textContent = getPivotPart(pivotKeys[keyIndex], level);
-            keyIndex += g.count;
+            th.textContent = h.getPart(ctx.pivotKeys[ki], level);
+            ki += g.count;
             row.appendChild(th);
           });
         });
         thead.appendChild(row);
       }
-      if (showMeasureHeaders) {
-        var hierarchicalMeasureRow = document.createElement("tr");
-        forEachValueColumn(function (measure) {
-          var th = document.createElement("th");
-          styleTh(th);
-          th.style.textAlign = "center";
-          th.textContent = measureLabels[measure.name] || measure.name;
-          hierarchicalMeasureRow.appendChild(th);
-        });
-        thead.appendChild(hierarchicalMeasureRow);
-      }
+      if (cfg.showMeasureHeaders) appendMeasureRow();
     } else {
-      // --- Single-level pivot headers (no "|" in keys)
-      var pivotHeaderRow = document.createElement("tr");
-      appendDimensionHeaderCells(pivotHeaderRow, numHeaderRows);
-
-      if (pivotMeta.length) {
-        forEachValueColumn(function (_measure, pk) {
-          var th = document.createElement("th");
-          styleTh(th);
-          th.style.textAlign = pivotHeaderAlignment;
-          th.textContent = displayPivotLabel(pivotLabels[pk] || pk);
-          pivotHeaderRow.appendChild(th);
+      var totalHeaderRows = 1 + (cfg.showMeasureHeaders ? 1 : 0);
+      var pRow = document.createElement("tr");
+      appendDimCells(pRow, totalHeaderRows);
+      if (ctx.pivotMeta.length) {
+        ctx.forEachValueCol(function (_m, pk) {
+          var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
+          th.textContent = displayLabel(pk);
+          pRow.appendChild(th);
         });
       } else {
-        measures.forEach(function (m) {
-          var th = document.createElement("th");
-          styleTh(th);
-          th.style.textAlign = pivotHeaderAlignment;
-          th.textContent = pivotLabels[m.name] || m.name;
-          pivotHeaderRow.appendChild(th);
+        ctx.measures.forEach(function (m) {
+          var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
+          th.textContent = ctx.pivotLabels[m.name] || m.name;
+          pRow.appendChild(th);
         });
       }
-      thead.appendChild(pivotHeaderRow);
-
-      if (showMeasureHeaders) {
-        var measureRow = document.createElement("tr");
-        forEachValueColumn(function (measure) {
-          var th = document.createElement("th");
-          styleTh(th);
-          th.style.textAlign = "center";
-          th.textContent = measureLabels[measure.name] || measure.name;
-          measureRow.appendChild(th);
-        });
-        thead.appendChild(measureRow);
-      }
+      thead.appendChild(pRow);
+      if (cfg.showMeasureHeaders) appendMeasureRow();
     }
-    table.appendChild(thead);
+  },
 
-    function cellValue(row, measureName, pivotKey) {
-      if (pivotMeta.length) {
-        var measureObj = row[measureName] && row[measureName][pivotKey];
-        return self._getNumericValue(measureObj);
-      }
-      var measureObj = row[measureName];
-      return self._getNumericValue(measureObj);
-    }
+  // ---------------------------------------------------------------------------
+  // Freeze stylesheet (pure CSS, no inline-style loops)
+  // ---------------------------------------------------------------------------
 
-    function formatValue(val) {
-      if (val == null || isNaN(val)) return "";
-      if (replaceZeroWithDash && Number(val) === 0) return "\u2013"; // en dash
-      if (Number(val) === Math.floor(val)) return String(Math.floor(val));
-      return Number(val).toFixed(1);
-    }
-
-    var tableTotalSpacing = sectionSpacing;
-    function makeSpacerRow() {
-      var tr = document.createElement("tr");
-      var spacerCell = document.createElement("td");
-      spacerCell.colSpan = totalColumnCount;
-      spacerCell.style.height = tableTotalSpacing + "px";
-      spacerCell.style.border = "none";
-      spacerCell.style.background = "transparent";
-      spacerCell.style.padding = "0";
-      spacerCell.style.lineHeight = "0";
-      tr.appendChild(spacerCell);
-      return tr;
-    }
-    function makeTableTotalRow() {
-      var tr = document.createElement("tr");
-      tr.className = "grouped-tables-table-total-row";
-      var totalLabel = document.createElement("td");
-      if (freezeNonMeasureColumns) totalLabel.className = "grouped-tables-col-frozen";
-      totalLabel.colSpan = dimensionColumnCount;
-      totalLabel.style.fontWeight = "bold";
-      totalLabel.style.padding = "6px 8px";
-      totalLabel.style.borderTop = "2px solid #ccc";
-      totalLabel.style.borderBottom = "1px solid #eee";
-      totalLabel.textContent = tableTotalLabel;
-      tr.appendChild(totalLabel);
-      forEachValueColumn(function (measure, pk) {
-        var td = document.createElement("td");
-        td.style.fontWeight = "bold";
-        td.style.padding = "6px 8px";
-        td.style.textAlign = "right";
-        td.style.borderTop = "1px solid #ccc";
-        td.style.borderBottom = "1px solid #eee";
-        td.textContent = formatValue(sumRows(data, measure.name, pk));
-        tr.appendChild(td);
-      });
-      return tr;
-    }
-
-    sections.forEach(function (section, sectionIndex) {
-      if (sectionSpacing > 0 && sectionIndex > 0) {
-        var spacerRow = document.createElement("tr");
-        var spacerCell = document.createElement("td");
-        spacerCell.colSpan = totalColumnCount;
-        spacerCell.style.height = sectionSpacing + "px";
-        spacerCell.style.border = "none";
-        spacerCell.style.background = "transparent";
-        spacerCell.style.padding = "0";
-        spacerCell.style.lineHeight = "0";
-        spacerCell.style.fontSize = "0";
-        spacerCell.style.verticalAlign = "top";
-        spacerCell.innerHTML = "<div style=\"display:block;height:" + sectionSpacing + "px;\"></div>";
-        spacerRow.appendChild(spacerCell);
-        tbody.appendChild(spacerRow);
-      }
-
-      if (groupDim && section.sectionLabel != null) {
-        var sectionRow = document.createElement("tr");
-        if (freezeNonMeasureColumns) sectionRow.className = "grouped-tables-section-header";
-        var sectionCell = document.createElement("td");
-        sectionCell.className = "grouped-tables-section-label" + (freezeNonMeasureColumns ? " grouped-tables-col-frozen" : "");
-        sectionCell.colSpan = dimensionColumnCount;
-        sectionCell.style.fontWeight = "bold";
-        sectionCell.style.textDecoration = "underline";
-        sectionCell.style.padding = "8px 6px 4px 6px";
-        sectionCell.style.borderBottom = "1px solid #ccc";
-        sectionCell.textContent = section.sectionLabel;
-        sectionRow.appendChild(sectionCell);
-        if (valueColumnCount > 0) {
-          var fillerCell = document.createElement("td");
-          fillerCell.colSpan = valueColumnCount;
-          fillerCell.style.borderBottom = "1px solid #ccc";
-          fillerCell.style.padding = "0";
-          fillerCell.style.background = "transparent";
-          sectionRow.appendChild(fillerCell);
-        }
-        tbody.appendChild(sectionRow);
-      }
-
-      section.rows.forEach(function (row) {
-        var tr = document.createElement("tr");
-        displayDims.forEach(function (dim, idx) {
-          var tdLabel = document.createElement("td");
-          if (freezeNonMeasureColumns && idx === 0) tdLabel.className = "grouped-tables-col-frozen";
-          tdLabel.style.padding = "6px 8px";
-          tdLabel.style.borderBottom = "1px solid #eee";
-          tdLabel.textContent = getRowDimValue(row, dim);
-          tr.appendChild(tdLabel);
-        });
-
-        forEachValueColumn(function (measure, pk) {
-          var td = document.createElement("td");
-          td.style.padding = "6px 8px";
-          td.style.textAlign = "right";
-          td.style.borderBottom = "1px solid #eee";
-          td.textContent = formatValue(cellValue(row, measure.name, pk));
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-
-      if (showSubTotals && section.rows.length > 0) {
-        var totalRow = document.createElement("tr");
-        var totalLabel = document.createElement("td");
-        if (freezeNonMeasureColumns) totalLabel.className = "grouped-tables-col-frozen";
-        totalLabel.colSpan = dimensionColumnCount;
-        totalLabel.style.fontWeight = "bold";
-        totalLabel.style.padding = "6px 8px";
-        totalLabel.style.borderTop = "1px solid #ccc";
-        totalLabel.style.borderBottom = "1px solid #eee";
-        totalLabel.textContent = "Total";
-        totalRow.appendChild(totalLabel);
-
-        forEachValueColumn(function (measure, pk) {
-          var td = document.createElement("td");
-          td.style.fontWeight = "bold";
-          td.style.padding = "6px 8px";
-          td.style.textAlign = "right";
-          td.style.borderTop = "1px solid #ccc";
-          td.style.borderBottom = "1px solid #eee";
-          td.textContent = formatValue(sumRows(section.rows, measure.name, pk));
-          totalRow.appendChild(td);
-        });
-        tbody.appendChild(totalRow);
-      }
-    });
-
-    if (showTableTotal) {
-      var tableTotalRow = makeTableTotalRow();
-      if (tableTotalPosition === "top") {
-        if (tableTotalSpacing > 0) tbody.insertBefore(makeSpacerRow(), tbody.firstChild);
-        tbody.insertBefore(tableTotalRow, tbody.firstChild);
-      } else {
-        if (tableTotalSpacing > 0) tbody.appendChild(makeSpacerRow());
-        tbody.appendChild(tableTotalRow);
-      }
-    }
-
-    table.appendChild(tbody);
-    container.innerHTML = "";
-    if (freezeNonMeasureColumns) {
-      container.style.overflow = "hidden";
-      var scrollWrapper = document.createElement("div");
-      scrollWrapper.className = "grouped-tables-scroll-wrapper";
-      scrollWrapper.style.overflow = "auto";
-      scrollWrapper.style.width = "100%";
-      scrollWrapper.style.height = "100%";
-      scrollWrapper.style.minWidth = "0";
-      scrollWrapper.appendChild(table);
-      container.appendChild(scrollWrapper);
-    } else {
-      container.style.overflow = "auto";
-      container.appendChild(table);
-    }
-    if (freezeNonMeasureColumns) {
-      var style = document.createElement("style");
-      style.textContent =
-        ".grouped-tables-scroll-wrapper { -webkit-overflow-scrolling: touch; }" +
-        ".grouped-tables-frozen { border-collapse: separate; border-spacing: 0; }" +
-        ".grouped-tables-frozen .grouped-tables-col-frozen {" +
-        "position: sticky !important; left: 0 !important; z-index: 1; box-shadow: 2px 0 4px rgba(0,0,0,0.08); min-width: 10em;" +
-        "}" +
-        ".grouped-tables-frozen thead .grouped-tables-col-frozen { z-index: 2; }" +
-        ".grouped-tables-frozen tbody .grouped-tables-col-frozen { background: #fff !important; }" +
-        ".grouped-tables-frozen .grouped-tables-section-label { z-index: 3; }";
-      container.appendChild(style);
-      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen thead .grouped-tables-col-frozen"), function (th) {
-        th.style.backgroundColor = headerColor;
-        th.style.color = "#ffffff";
-        th.style.minWidth = "10em";
-        th.style.position = "sticky";
-        th.style.left = "0";
-        th.style.zIndex = "2";
-      });
-      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen tbody .grouped-tables-col-frozen"), function (td) {
-        td.style.minWidth = "10em";
-        td.style.backgroundColor = "#fff";
-        td.style.position = "sticky";
-        td.style.left = "0";
-        td.style.zIndex = "1";
-      });
-      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen .grouped-tables-section-label"), function (td) {
-        td.style.backgroundColor = "#fff";
-        td.style.position = "sticky";
-        td.style.left = "0";
-        td.style.zIndex = "3";
-      });
-    }
-    } catch (err) {
-      container.innerHTML = "<p style=\"padding:12px;color:#c00;\">Error: " + (err.message || String(err)) + "</p>";
-    }
-    done();
+  _freezeStyleSheet: function (headerColor) {
+    var style = document.createElement("style");
+    style.textContent = [
+      ".grouped-tables-scroll-wrapper { -webkit-overflow-scrolling: touch; }",
+      ".grouped-tables-frozen { border-collapse: separate; border-spacing: 0; }",
+      ".grouped-tables-frozen .grouped-tables-col-frozen {",
+      "  position: sticky !important; left: 0 !important;",
+      "  z-index: 1; background: #fff;",
+      "  box-shadow: 2px 0 4px rgba(0,0,0,0.08); min-width: 10em;",
+      "}",
+      ".grouped-tables-frozen thead .grouped-tables-col-frozen {",
+      "  z-index: 2;",
+      "  background: " + headerColor + " !important;",
+      "  color: #fff !important;",
+      "}",
+      ".grouped-tables-frozen tbody .grouped-tables-col-frozen {",
+      "  background: #fff !important;",
+      "}",
+      ".grouped-tables-frozen .grouped-tables-section-label {",
+      "  z-index: 3;",
+      "}"
+    ].join("\n");
+    return style;
   }
 });
