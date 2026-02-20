@@ -40,6 +40,45 @@ looker.plugins.visualizations.add({
       section: "Display",
       order: 5
     },
+    valueFormatPreset: {
+      type: "string",
+      label: "Value format",
+      display: "select",
+      section: "Display",
+      order: 5.5,
+      default: "__default__",
+      values: [
+        { "Default formatting": "__default__" },
+        { "Decimals (0) \u2014 1,235": "dec_0" },
+        { "Decimals (1) \u2014 1,234.6": "dec_1" },
+        { "Decimals (2) \u2014 1,234.57": "dec_2" },
+        { "Decimals (3) \u2014 1,234.567": "dec_3" },
+        { "Decimals (4) \u2014 1,234.5668": "dec_4" },
+        { "Percent (0) \u2014 123,457%": "pct_0" },
+        { "Percent (1) \u2014 123,456.7%": "pct_1" },
+        { "Percent (2) \u2014 123,456.68%": "pct_2" },
+        { "Percent (3) \u2014 123,456.679%": "pct_3" },
+        { "Percent (4) \u2014 123,456.6789%": "pct_4" },
+        { "U.S. Dollars (0) \u2014 $1,235": "usd_0" },
+        { "U.S. Dollars (2) \u2014 $1,234.57": "usd_2" },
+        { "British Pounds (0) \u2014 \u00a31,235": "gbp_0" },
+        { "British Pounds (2) \u2014 \u00a31,234.57": "gbp_2" },
+        { "Euros (0) \u2014 \u20ac1,235": "eur_0" },
+        { "Euros (2) \u2014 \u20ac1,234.57": "eur_2" },
+        { "ID \u2014 1235": "id_0" },
+        { "Custom...": "__custom__" }
+      ]
+    },
+    customValueFormat: {
+      type: "string",
+      label: "Custom value format",
+      default: "",
+      display: "text",
+      placeholder: "Examples: $#,##0.00, 0.0%, 0.000,, \"M\"",
+      description: "Value format syntax docs: https://docs.cloud.google.com/looker/docs/custom-formatting?version=26.2&is_cloud_provider_native=false",
+      section: "Display",
+      order: 5.6
+    },
     freezeNonMeasureColumns: {
       type: "boolean",
       label: "Freeze non-measure columns",
@@ -131,6 +170,92 @@ looker.plugins.visualizations.add({
     return (v == null || String(v).trim() === "") ? (fallback || "") : String(v);
   },
 
+  _valueFormatPatternFromPreset: function (preset, customPattern) {
+    var p = String(preset || "__default__").trim();
+    var custom = String(customPattern || "").trim();
+    if (p === "__custom__") return custom;
+    if (p === "__default__") return "";
+
+    var map = {
+      dec_0: "#,##0",
+      dec_1: "#,##0.0",
+      dec_2: "#,##0.00",
+      dec_3: "#,##0.000",
+      dec_4: "#,##0.0000",
+      pct_0: "0%",
+      pct_1: "0.0%",
+      pct_2: "0.00%",
+      pct_3: "0.000%",
+      pct_4: "0.0000%",
+      usd_0: "$#,##0",
+      usd_2: "$#,##0.00",
+      gbp_0: "\u00a3#,##0",
+      gbp_2: "\u00a3#,##0.00",
+      eur_0: "\u20ac#,##0",
+      eur_2: "\u20ac#,##0.00",
+      id_0: "0"
+    };
+    return map[p] || "";
+  },
+
+  _applyValueFormat: function (val, pattern) {
+    if (val == null || isNaN(val)) return "";
+    var fmt = String(pattern || "").trim();
+    if (!fmt) return String(val);
+
+    var sections = fmt.split(";");
+    var isNeg = Number(val) < 0;
+    var active = (isNeg && sections[1]) ? sections[1] : sections[0];
+    var parenNeg = active.indexOf("(") >= 0 && active.indexOf(")") >= 0;
+    var absVal = Math.abs(Number(val));
+
+    var hasPct = /(^|[^\\])%/.test(active);
+    if (hasPct) absVal *= 100;
+
+    var literalMatches = [];
+    active.replace(/"([^"]*)"/g, function (_m, txt) { literalMatches.push(txt); return _m; });
+    var literalText = literalMatches.join("");
+
+    var core = active
+      .replace(/\(.*?\)/g, "")
+      .replace(/"[^"]*"/g, "")
+      .replace(/\\%/g, "%")
+      .replace(/%/g, "")
+      .trim();
+    var symbolMatch = core.match(/^([$£€])/);
+    var currency = symbolMatch ? symbolMatch[1] : "";
+
+    var firstDigit = core.search(/[0#]/);
+    var lastDigit = Math.max(core.lastIndexOf("0"), core.lastIndexOf("#"));
+    var numericPart = (firstDigit >= 0 && lastDigit >= firstDigit) ? core.slice(firstDigit, lastDigit + 1) : "";
+
+    var dot = numericPart.indexOf(".");
+    var fracPattern = dot >= 0 ? numericPart.slice(dot + 1) : "";
+    var minFrac = (fracPattern.match(/0/g) || []).length;
+    var maxFrac = fracPattern.length;
+    var useGrouping = numericPart.indexOf(",") >= 0;
+
+    var scalePart = numericPart;
+    var commas = 0;
+    while (scalePart.endsWith(",")) {
+      commas++;
+      scalePart = scalePart.slice(0, -1);
+    }
+    if (commas > 0) absVal = absVal / Math.pow(1000, commas);
+
+    var numText = absVal.toLocaleString(undefined, {
+      minimumFractionDigits: minFrac,
+      maximumFractionDigits: maxFrac,
+      useGrouping: useGrouping
+    });
+
+    var out = currency + numText + literalText;
+    if (hasPct) out += "%";
+    if (isNeg && !parenNeg) out = "-" + out;
+    if (isNeg && parenNeg) out = "(" + out + ")";
+    return out;
+  },
+
   _isNullPivot: function (val) {
     if (val == null) return true;
     var s = String(val).trim();
@@ -207,6 +332,8 @@ looker.plugins.visualizations.add({
     function formatValue(val) {
       if (val == null || isNaN(val)) return "";
       if (cfg.replaceZero && Number(val) === 0) return "\u2013";
+      var pattern = self._valueFormatPatternFromPreset(cfg.valueFormatPreset, cfg.valueFormatCustom);
+      if (pattern) return self._applyValueFormat(val, pattern);
       return Number(val) === Math.floor(val) ? String(Math.floor(val)) : Number(val).toFixed(1);
     }
 
@@ -326,6 +453,8 @@ looker.plugins.visualizations.add({
     var headerColor = String(c("pivotedHeaderColor", "#215C98") || "#215C98").trim() || "#215C98";
     var alignRaw = String(c("pivotHeaderAlignment", "left") || "left").toLowerCase().trim();
     var spacingRaw = Number(c("sectionSpacing", 24));
+    var valueFormatPreset = String(c("valueFormatPreset", "__default__") || "__default__").trim();
+    var valueFormatCustom = String(c("customValueFormat", "") || "").trim();
 
     return {
       groupDim: groupDim,
@@ -338,7 +467,9 @@ looker.plugins.visualizations.add({
       freeze:             !!c("freezeNonMeasureColumns", true),
       showTableTotal:     !!c("showTableTotal", false),
       tableTotalPosition: String(posRaw || "").toLowerCase().indexOf("top") >= 0 ? "top" : "bottom",
-      tableTotalLabel:    String(c("tableTotalLabel", "Total") || "Total").trim() || "Total"
+      tableTotalLabel:    String(c("tableTotalLabel", "Total") || "Total").trim() || "Total",
+      valueFormatPreset:  valueFormatPreset,
+      valueFormatCustom:  valueFormatCustom
     };
   },
 
