@@ -169,12 +169,13 @@ looker.plugins.visualizations.add({
     var cfg = self._resolveConfig(config, dims, measures, pivotMeta);
 
     // --- Pivot analysis ---------------------------------------------------------
+    var pivotFields = qr.fields.pivots || [];
     var pivot = self._analyzePivots(pivotMeta, measures);
     var pivotKeys   = pivot.keys;
     var pivotLabels = pivot.labels;
 
     // --- Pivot hierarchy --------------------------------------------------------
-    var hierarchy = self._analyzeHierarchy(pivotKeys, measures);
+    var hierarchy = self._analyzeHierarchy(pivotMeta, pivotFields, measures, pivotKeys);
 
     // --- Layout counts ----------------------------------------------------------
     var displayDims = cfg.groupDim
@@ -223,7 +224,7 @@ looker.plugins.visualizations.add({
     // --- Header -----------------------------------------------------------------
     self._renderHeader(thead, {
       displayDims: displayDims, measures: measures, pivotMeta: pivotMeta,
-      pivotKeys: pivotKeys, pivotLabels: pivotLabels,
+      pivotKeys: pivotKeys, pivotLabels: pivotLabels, pivotFields: pivotFields,
       hierarchy: hierarchy, measureLabels: measureLabels,
       cfg: cfg, forEachValueCol: forEachValueCol
     });
@@ -375,49 +376,65 @@ looker.plugins.visualizations.add({
     return { keys: keys, labels: labels };
   },
 
-  _analyzeHierarchy: function (pivotKeys, measures) {
+  _analyzeHierarchy: function (pivotMeta, pivotFields, measures, pivotKeys) {
     var self = this;
-    var parts = pivotKeys.map(function (pk) { return self._parsePivotKey(pk); });
-    var numLevels = parts.length ? Math.max.apply(null, parts.map(function (p) { return p.length; })) : 0;
-    var measureNames = measures.map(function (m) { return m.name; });
+    var numPivotFields = pivotFields.length;
 
-    var middleIsMeasure = numLevels >= 3 && measures.some(function (m) {
-      return parts.some(function (p) { return p[1] === m.name; });
-    });
-    var levelCount = middleIsMeasure && numLevels >= 3 ? 2 : (numLevels >= 2 ? Math.min(numLevels, 10) : 1);
-    var isHierarchical = pivotKeys.length > 0 && numLevels >= 2;
+    var pivotMap = {};
+    pivotMeta.forEach(function (p) { pivotMap[p.key] = p; });
 
-    function isMeasureOrBlank(val) {
-      if (val == null || String(val).trim() === "") return true;
-      return measureNames.indexOf(String(val).trim()) >= 0;
+    var hasStructuredData = numPivotFields > 0 && pivotMeta.length > 0 &&
+      pivotMeta[0].data != null && typeof pivotMeta[0].data === "object";
+
+    var levelCount, isHierarchical;
+
+    if (hasStructuredData) {
+      levelCount = numPivotFields;
+      isHierarchical = numPivotFields >= 2;
+    } else if (pivotMeta.length > 0 && pivotKeys.length > 0) {
+      var parsed = pivotKeys.map(function (pk) { return self._parsePivotKey(pk); });
+      var maxParts = Math.max.apply(null, parsed.map(function (p) { return p.length; }));
+      levelCount = maxParts;
+      isHierarchical = maxParts >= 2;
+    } else {
+      levelCount = pivotMeta.length > 0 ? 1 : 0;
+      isHierarchical = false;
     }
 
     function getPart(pk, level) {
-      if (pk == null) return "";
-      var p = self._parsePivotKey(pk);
-      var raw;
-      if (p.length === 1) {
-        return level === 0 ? "" : (isMeasureOrBlank(p[0]) || self._isNullPivot(p[0]) ? "" : p[0]);
+      if (level >= levelCount) return "";
+      var entry = pivotMap[pk];
+      if (entry && entry.is_total) return level === 0 ? "Total" : "";
+
+      if (hasStructuredData && entry && entry.data && pivotFields[level]) {
+        var cell = entry.data[pivotFields[level].name];
+        if (!cell) return "";
+        var val = (cell.rendered != null && cell.rendered !== "") ? cell.rendered : cell.value;
+        if (val == null || self._isNullPivot(val)) return "";
+        return String(val).trim();
       }
-      if (middleIsMeasure && p.length >= 3) {
-        raw = level === 0 ? p[0] : (level === 1 ? p[2] : p[level]);
-      } else {
-        raw = p[level] != null ? p[level] : (level === 0 ? "" : pk);
-      }
-      if (raw == null || raw === "") return "";
-      if (isMeasureOrBlank(raw) || self._isNullPivot(raw)) return "";
-      return String(raw).trim();
+
+      var parts = self._parsePivotKey(pk);
+      var raw = parts[level] != null ? parts[level] : "";
+      return self._isNullPivot(raw) ? "" : String(raw).trim();
     }
 
     function getTuple(pk, upToLevel) {
-      if (pk == null) return "";
-      var p = self._parsePivotKey(pk);
-      if (middleIsMeasure && p.length >= 3) {
-        var out = [p[0]];
-        if (upToLevel >= 1) out.push(p[2]);
-        return out.join("\0");
+      var entry = pivotMap[pk];
+
+      if (hasStructuredData && entry && entry.data) {
+        var tparts = [];
+        for (var l = 0; l <= upToLevel && l < levelCount; l++) {
+          if (pivotFields[l]) {
+            var cell = entry.data[pivotFields[l].name];
+            tparts.push(cell ? String(cell.value != null ? cell.value : "") : "");
+          }
+        }
+        return tparts.join("\0");
       }
-      return p.slice(0, upToLevel + 1).join("\0");
+
+      var parsed = self._parsePivotKey(pk);
+      return parsed.slice(0, upToLevel + 1).join("\0");
     }
 
     function groupConsecutive(arr, fn) {
@@ -433,7 +450,6 @@ looker.plugins.visualizations.add({
     return {
       isHierarchical: isHierarchical,
       levelCount: levelCount,
-      middleIsMeasure: middleIsMeasure,
       getPart: getPart,
       getTuple: getTuple,
       groupConsecutive: groupConsecutive
@@ -588,7 +604,7 @@ looker.plugins.visualizations.add({
     }
 
     if (h.isHierarchical && ctx.pivotMeta.length) {
-      var totalHeaderRows = 1 + h.levelCount + (cfg.showMeasureHeaders ? 1 : 0);
+      var totalHeaderRows = h.levelCount + (cfg.showMeasureHeaders ? 1 : 0);
       for (var level = 0; level < h.levelCount; level++) {
         var row = document.createElement("tr");
         if (level === 0) appendDimCells(row, totalHeaderRows);
