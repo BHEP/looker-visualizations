@@ -147,10 +147,32 @@ looker.plugins.visualizations.add({
       return;
     }
 
+    function clampNumber(value, min, max, fallback) {
+      var n = Number(value);
+      if (!isFinite(n)) return fallback;
+      return Math.max(min, Math.min(max, n));
+    }
+    function normalizeHeaderColor(value, fallback) {
+      var s = String(value || "").trim();
+      return s ? s : fallback;
+    }
+    function getFieldLabel(field, fallback) {
+      if (!field) return fallback;
+      var label = field.label_short || field.label || field.name || fallback;
+      label = String(label == null ? "" : label).trim();
+      return label || fallback;
+    }
+    function getCellText(cell, fallback) {
+      if (!cell) return fallback || "";
+      var value = cell.rendered != null && cell.rendered !== "" ? cell.rendered : cell.value;
+      if (value == null || String(value).trim() === "") return fallback || "";
+      return String(value);
+    }
+
     // Dynamic "Group by" dropdown: show column labels (not backend names); no blank option
     var groupByValues = [{ "No sections": "__none__" }];
     dims.forEach(function (d) {
-      var displayLabel = d.label || d.label_short || d.name;
+      var displayLabel = getFieldLabel(d, d.name);
       groupByValues.push({ [displayLabel]: d.name });
     });
     var newOptions = Object.assign({}, this.options);
@@ -167,8 +189,8 @@ looker.plugins.visualizations.add({
     }
     var showMeasureHeaders = !!self._getConfig(config, "showMeasureHeaders", true);
     var showSubTotals = !!self._getConfig(config, "showSubTotals", true);
-    var sectionSpacing = Number(self._getConfig(config, "sectionSpacing", 24)) || 24;
-    var headerColor = (self._getConfig(config, "pivotedHeaderColor", "#215C98") || "#215C98").trim();
+    var sectionSpacing = clampNumber(self._getConfig(config, "sectionSpacing", 24), 0, 120, 24);
+    var headerColor = normalizeHeaderColor(self._getConfig(config, "pivotedHeaderColor", "#215C98"), "#215C98");
     var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", true);
     var freezeNonMeasureColumns = !!self._getConfig(config, "freezeNonMeasureColumns", true);
     var showTableTotal = !!self._getConfig(config, "showTableTotal", false);
@@ -182,7 +204,7 @@ looker.plugins.visualizations.add({
       groupDim = dims.find(function (d) { return d.name === groupByField; });
       if (!groupDim) {
         groupDim = dims.find(function (d) {
-          var L = d.label || d.label_short || d.name;
+          var L = getFieldLabel(d, d.name);
           return L === groupByField;
         });
       }
@@ -286,6 +308,28 @@ looker.plugins.visualizations.add({
     measures.forEach(function (m) {
       measureLabels[m.name] = m.label_short || m.label || m.name;
     });
+    var valueColumnCount = pivotMeta.length ? measures.length * pivotKeys.length : measures.length;
+    var totalColumnCount = 1 + valueColumnCount;
+    function forEachValueColumn(callback) {
+      if (pivotMeta.length) {
+        measures.forEach(function (measure) {
+          pivotKeys.forEach(function (pk) {
+            callback(measure, pk);
+          });
+        });
+        return;
+      }
+      measures.forEach(function (measure) {
+        callback(measure, measure.name);
+      });
+    }
+    function sumRows(rows, measureName, pivotKey) {
+      var sum = 0;
+      rows.forEach(function (row) {
+        sum += cellValue(row, measureName, pivotKey);
+      });
+      return sum;
+    }
 
     // Build sections: array of { sectionLabel, rows: [row, ...] }
     var sections = [];
@@ -294,12 +338,12 @@ looker.plugins.visualizations.add({
     function getGroupKey(row) {
       if (!groupDim) return null;
       var cell = row[groupDim.name];
-      return cell && cell.value != null ? String(cell.value) : "";
+      return getCellText(cell, "");
     }
 
     function getRowLabel(row) {
       var cell = row[rowLabelDim.name];
-      return cell && cell.value != null ? String(cell.value) : "";
+      return getCellText(cell, "");
     }
 
     data.forEach(function (row) {
@@ -324,6 +368,7 @@ looker.plugins.visualizations.add({
     table.setAttribute("cellspacing", "0");
     table.style.borderCollapse = "collapse";
     table.style.width = "100%";
+    table.style.tableLayout = "auto";
     table.style.fontFamily = "inherit";
     table.style.fontSize = "14px";
     if (freezeNonMeasureColumns) {
@@ -345,7 +390,7 @@ looker.plugins.visualizations.add({
       el.style.padding = "8px";
     }
 
-    var rowLabelText = rowLabelDim.label_short || rowLabelDim.label || rowLabelDim.name;
+    var rowLabelText = getFieldLabel(rowLabelDim, "Row");
     var numHeaderRowsHierarchical = 1 + pivotLevelCount;
     var numHeaderRows = 1 + (hasHierarchicalPivots ? pivotLevelCount : 0) + (showMeasureHeaders && !hasHierarchicalPivots ? 1 : 0);
 
@@ -399,14 +444,12 @@ looker.plugins.visualizations.add({
       pivotHeaderRow.appendChild(pivotHeaderFirst);
 
       if (pivotMeta.length) {
-        measures.forEach(function () {
-          pivotKeys.forEach(function (pk) {
-            var th = document.createElement("th");
-            styleTh(th);
-            th.style.textAlign = "center";
-            th.textContent = displayPivotLabel(pivotLabels[pk] || pk);
-            pivotHeaderRow.appendChild(th);
-          });
+        forEachValueColumn(function (_measure, pk) {
+          var th = document.createElement("th");
+          styleTh(th);
+          th.style.textAlign = "center";
+          th.textContent = displayPivotLabel(pivotLabels[pk] || pk);
+          pivotHeaderRow.appendChild(th);
         });
       } else {
         measures.forEach(function (m) {
@@ -421,14 +464,12 @@ looker.plugins.visualizations.add({
 
       if (showMeasureHeaders) {
         var measureRow = document.createElement("tr");
-        measures.forEach(function (measure) {
-          (pivotMeta.length ? pivotKeys : [measure.name]).forEach(function () {
-            var th = document.createElement("th");
-            styleTh(th);
-            th.style.textAlign = "center";
-            th.textContent = measureLabels[measure.name] || measure.name;
-            measureRow.appendChild(th);
-          });
+        forEachValueColumn(function (measure) {
+          var th = document.createElement("th");
+          styleTh(th);
+          th.style.textAlign = "center";
+          th.textContent = measureLabels[measure.name] || measure.name;
+          measureRow.appendChild(th);
         });
         thead.appendChild(measureRow);
       }
@@ -455,7 +496,7 @@ looker.plugins.visualizations.add({
     function makeSpacerRow() {
       var tr = document.createElement("tr");
       var spacerCell = document.createElement("td");
-      spacerCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
+      spacerCell.colSpan = totalColumnCount;
       spacerCell.style.height = tableTotalSpacing + "px";
       spacerCell.style.border = "none";
       spacerCell.style.background = "transparent";
@@ -475,39 +516,16 @@ looker.plugins.visualizations.add({
       totalLabel.style.borderBottom = "1px solid #eee";
       totalLabel.textContent = tableTotalLabel;
       tr.appendChild(totalLabel);
-      if (pivotMeta.length) {
-        measures.forEach(function (measure) {
-          pivotKeys.forEach(function (pk) {
-            var sum = 0;
-            data.forEach(function (row) {
-              sum += cellValue(row, measure.name, pk);
-            });
-            var td = document.createElement("td");
-            td.style.fontWeight = "bold";
-            td.style.padding = (tableTotalSpacing + 6) + "px 8px";
-            td.style.textAlign = "right";
-            td.style.borderTop = "1px solid #ccc";
-            td.style.borderBottom = "1px solid #eee";
-            td.textContent = formatValue(sum);
-            tr.appendChild(td);
-          });
-        });
-      } else {
-        measures.forEach(function (m) {
-          var sum = 0;
-          data.forEach(function (row) {
-            sum += cellValue(row, m.name, m.name);
-          });
-          var td = document.createElement("td");
-          td.style.fontWeight = "bold";
-          td.style.padding = (tableTotalSpacing + 6) + "px 8px";
-          td.style.textAlign = "right";
-          td.style.borderTop = "1px solid #ccc";
-          td.style.borderBottom = "1px solid #eee";
-          td.textContent = formatValue(sum);
-          tr.appendChild(td);
-        });
-      }
+      forEachValueColumn(function (measure, pk) {
+        var td = document.createElement("td");
+        td.style.fontWeight = "bold";
+        td.style.padding = (tableTotalSpacing + 6) + "px 8px";
+        td.style.textAlign = "right";
+        td.style.borderTop = "1px solid #ccc";
+        td.style.borderBottom = "1px solid #eee";
+        td.textContent = formatValue(sumRows(data, measure.name, pk));
+        tr.appendChild(td);
+      });
       return tr;
     }
 
@@ -518,7 +536,7 @@ looker.plugins.visualizations.add({
         spacerRow.style.lineHeight = "0";
         spacerRow.style.fontSize = "0";
         var spacerCell = document.createElement("td");
-        spacerCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
+        spacerCell.colSpan = totalColumnCount;
         spacerCell.style.height = sectionSpacing + "px";
         spacerCell.style.minHeight = sectionSpacing + "px";
         spacerCell.style.maxHeight = sectionSpacing + "px";
@@ -538,14 +556,21 @@ looker.plugins.visualizations.add({
         var sectionRow = document.createElement("tr");
         if (freezeNonMeasureColumns) sectionRow.className = "grouped-tables-section-header";
         var sectionCell = document.createElement("td");
-        if (freezeNonMeasureColumns) sectionCell.className = "grouped-tables-col-frozen";
-        sectionCell.colSpan = 1 + (pivotMeta.length ? measures.length * pivotKeys.length : measures.length);
+        sectionCell.className = "grouped-tables-section-label" + (freezeNonMeasureColumns ? " grouped-tables-col-frozen" : "");
         sectionCell.style.fontWeight = "bold";
         sectionCell.style.textDecoration = "underline";
         sectionCell.style.padding = "8px 6px 4px 6px";
         sectionCell.style.borderBottom = "1px solid #ccc";
         sectionCell.textContent = section.sectionLabel;
         sectionRow.appendChild(sectionCell);
+        if (totalColumnCount > 1) {
+          var fillerCell = document.createElement("td");
+          fillerCell.colSpan = totalColumnCount - 1;
+          fillerCell.style.borderBottom = "1px solid #ccc";
+          fillerCell.style.padding = "0";
+          fillerCell.style.background = "transparent";
+          sectionRow.appendChild(fillerCell);
+        }
         tbody.appendChild(sectionRow);
       }
 
@@ -558,27 +583,14 @@ looker.plugins.visualizations.add({
         tdLabel.textContent = getRowLabel(row);
         tr.appendChild(tdLabel);
 
-        if (pivotMeta.length) {
-          measures.forEach(function (measure) {
-            pivotKeys.forEach(function (pk) {
-              var td = document.createElement("td");
-              td.style.padding = "6px 8px";
-              td.style.textAlign = "right";
-              td.style.borderBottom = "1px solid #eee";
-              td.textContent = formatValue(cellValue(row, measure.name, pk));
-              tr.appendChild(td);
-            });
-          });
-        } else {
-          measures.forEach(function (m) {
-            var td = document.createElement("td");
-            td.style.padding = "6px 8px";
-            td.style.textAlign = "right";
-            td.style.borderBottom = "1px solid #eee";
-            td.textContent = formatValue(cellValue(row, m.name, m.name));
-            tr.appendChild(td);
-          });
-        }
+        forEachValueColumn(function (measure, pk) {
+          var td = document.createElement("td");
+          td.style.padding = "6px 8px";
+          td.style.textAlign = "right";
+          td.style.borderBottom = "1px solid #eee";
+          td.textContent = formatValue(cellValue(row, measure.name, pk));
+          tr.appendChild(td);
+        });
         tbody.appendChild(tr);
       });
 
@@ -593,39 +605,16 @@ looker.plugins.visualizations.add({
         totalLabel.textContent = "Total";
         totalRow.appendChild(totalLabel);
 
-        if (pivotMeta.length) {
-          measures.forEach(function (measure) {
-            pivotKeys.forEach(function (pk) {
-              var sum = 0;
-              section.rows.forEach(function (row) {
-                sum += cellValue(row, measure.name, pk);
-              });
-              var td = document.createElement("td");
-              td.style.fontWeight = "bold";
-              td.style.padding = "6px 8px";
-              td.style.textAlign = "right";
-              td.style.borderTop = "1px solid #ccc";
-              td.style.borderBottom = "1px solid #eee";
-              td.textContent = formatValue(sum);
-              totalRow.appendChild(td);
-            });
-          });
-        } else {
-          measures.forEach(function (m) {
-            var sum = 0;
-            section.rows.forEach(function (row) {
-              sum += cellValue(row, m.name, m.name);
-            });
-            var td = document.createElement("td");
-            td.style.fontWeight = "bold";
-            td.style.padding = "6px 8px";
-            td.style.textAlign = "right";
-            td.style.borderTop = "1px solid #ccc";
-            td.style.borderBottom = "1px solid #eee";
-            td.textContent = formatValue(sum);
-            totalRow.appendChild(td);
-          });
-        }
+        forEachValueColumn(function (measure, pk) {
+          var td = document.createElement("td");
+          td.style.fontWeight = "bold";
+          td.style.padding = "6px 8px";
+          td.style.textAlign = "right";
+          td.style.borderTop = "1px solid #ccc";
+          td.style.borderBottom = "1px solid #eee";
+          td.textContent = formatValue(sumRows(section.rows, measure.name, pk));
+          totalRow.appendChild(td);
+        });
         tbody.appendChild(totalRow);
       }
     });
@@ -648,6 +637,7 @@ looker.plugins.visualizations.add({
     table.appendChild(tbody);
     container.innerHTML = "";
     if (freezeNonMeasureColumns) {
+      container.style.overflow = "hidden";
       var scrollWrapper = document.createElement("div");
       scrollWrapper.className = "grouped-tables-scroll-wrapper";
       scrollWrapper.style.overflow = "auto";
@@ -657,22 +647,24 @@ looker.plugins.visualizations.add({
       scrollWrapper.appendChild(table);
       container.appendChild(scrollWrapper);
     } else {
+      container.style.overflow = "auto";
       container.appendChild(table);
     }
     if (freezeNonMeasureColumns) {
       var style = document.createElement("style");
       style.textContent =
         ".grouped-tables-scroll-wrapper { -webkit-overflow-scrolling: touch; }" +
+        ".grouped-tables-frozen { border-collapse: separate; border-spacing: 0; }" +
         ".grouped-tables-frozen .grouped-tables-col-frozen {" +
-        "position: sticky !important; left: 0 !important; z-index: 1; background: #fff !important; box-shadow: 2px 0 4px rgba(0,0,0,0.08); min-width: 10em;" +
+        "position: sticky !important; left: 0 !important; z-index: 1; box-shadow: 2px 0 4px rgba(0,0,0,0.08); min-width: 10em;" +
         "}" +
         ".grouped-tables-frozen thead .grouped-tables-col-frozen { z-index: 2; }" +
-        ".grouped-tables-frozen .grouped-tables-section-header td {" +
-        "position: sticky !important; top: 0 !important; z-index: 1; background: #fff !important; box-shadow: 0 2px 4px rgba(0,0,0,0.08);" +
-        "}";
+        ".grouped-tables-frozen tbody .grouped-tables-col-frozen { background: #fff !important; }" +
+        ".grouped-tables-frozen .grouped-tables-section-label { z-index: 3; }";
       container.appendChild(style);
       [].forEach.call(container.querySelectorAll(".grouped-tables-frozen thead .grouped-tables-col-frozen"), function (th) {
         th.style.backgroundColor = headerColor;
+        th.style.color = "#ffffff";
         th.style.minWidth = "10em";
         th.style.position = "sticky";
         th.style.left = "0";
@@ -685,10 +677,11 @@ looker.plugins.visualizations.add({
         td.style.left = "0";
         td.style.zIndex = "1";
       });
-      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen .grouped-tables-section-header td"), function (td) {
+      [].forEach.call(container.querySelectorAll(".grouped-tables-frozen .grouped-tables-section-label"), function (td) {
         td.style.backgroundColor = "#fff";
         td.style.position = "sticky";
-        td.style.top = "0";
+        td.style.left = "0";
+        td.style.zIndex = "3";
       });
     }
     } catch (err) {
