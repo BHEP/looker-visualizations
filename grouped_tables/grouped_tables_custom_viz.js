@@ -42,7 +42,7 @@ looker.plugins.visualizations.add({
     },
     freezeNonMeasureColumns: {
       type: "boolean",
-      label: "Freeze non-measure columns (scroll to see pivoted values)",
+      label: "Freeze non-measure columns",
       default: true,
       section: "Display",
       order: 6
@@ -640,7 +640,10 @@ looker.plugins.visualizations.add({
       ".grouped-tables-frozen .grouped-tables-col-frozen {",
       "  position: sticky !important; left: 0 !important;",
       "  z-index: 1; background: #fff;",
-      "  box-shadow: 2px 0 4px rgba(0,0,0,0.08); min-width: 10em;",
+      "  border-right: 1px solid #d9d9d9;",
+      "  box-shadow: none;",
+      "  background-clip: padding-box;",
+      "  min-width: 10em;",
       "}",
       ".grouped-tables-frozen thead .grouped-tables-col-frozen {",
       "  z-index: 2;",
