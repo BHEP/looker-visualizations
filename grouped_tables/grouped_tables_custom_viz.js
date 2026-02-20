@@ -78,6 +78,43 @@ looker.plugins.visualizations.add({
       section: "Display",
       order: 6
     },
+    tableFontFamily: {
+      type: "string",
+      label: "Font family",
+      display: "select",
+      section: "Display",
+      order: 7,
+      default: "Cambria, serif",
+      values: [
+        { "Cambria": "Cambria, serif" },
+        { "Arial": "Arial, sans-serif" },
+        { "Calibri": "Calibri, sans-serif" },
+        { "Georgia": "Georgia, serif" },
+        { "Tahoma": "Tahoma, sans-serif" },
+        { "Times New Roman": "\"Times New Roman\", serif" },
+        { "Verdana": "Verdana, sans-serif" }
+      ]
+    },
+    pivotColumnWidthMode: {
+      type: "string",
+      label: "Column width",
+      display: "select",
+      section: "Display",
+      order: 8,
+      default: "auto",
+      values: [
+        { "Auto width": "auto" },
+        { "Custom width": "custom" }
+      ]
+    },
+    pivotColumnWidthPx: {
+      type: "number",
+      label: "Custom pivot width (px)",
+      section: "Display",
+      order: 8.1,
+      default: 120,
+      hidden: true
+    },
     groupByDimension: {
       type: "string",
       label: "Group by (dimension for sections)",
@@ -307,9 +344,13 @@ looker.plugins.visualizations.add({
       return Number(val) === Math.floor(val) ? String(Math.floor(val)) : Number(val).toFixed(1);
     }
 
+    var valueColStyle = cfg.valueColWidthMode === "custom"
+      ? { width: cfg.valueColWidthPx + "px", minWidth: cfg.valueColWidthPx + "px", maxWidth: cfg.valueColWidthPx + "px" }
+      : null;
+
     // --- Build table ---
     var sections = self._buildSections(data, cfg.groupDim);
-    var table = self._createTable(cfg.freeze);
+    var table = self._createTable(cfg.freeze, cfg.fontFamily);
     var thead = document.createElement("thead");
     var tbody = document.createElement("tbody");
 
@@ -320,7 +361,7 @@ looker.plugins.visualizations.add({
       displayDims: displayDims, measures: measures, pivotMeta: pivotMeta,
       pivotKeys: pivotKeys, pivotLabels: pivot.labels, pivotFields: pivotFields,
       hierarchy: hierarchy, measureLabels: measureLabels,
-      cfg: cfg, forEachValueCol: forEachValueCol
+      cfg: cfg, forEachValueCol: forEachValueCol, valueColStyle: valueColStyle
     });
     table.appendChild(thead);
 
@@ -341,20 +382,22 @@ looker.plugins.visualizations.add({
           tr.appendChild(td);
         });
         forEachValueCol(function (m, pk) {
-          var td = self._td({ padding: "6px 8px", textAlign: "right", borderBottom: "1px solid #eee" });
+          var tdStyle = { padding: "6px 8px", textAlign: "right", borderBottom: "1px solid #eee" };
+          if (valueColStyle) Object.assign(tdStyle, valueColStyle);
+          var td = self._td(tdStyle);
           td.textContent = formatValue(cellValue(row, m.name, pk));
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
       });
       if (cfg.showSubTotals && section.rows.length > 0) {
-        tbody.appendChild(self._makeTotalRow("Total", section.rows, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue));
+        tbody.appendChild(self._makeTotalRow("Total", section.rows, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue, valueColStyle));
       }
     });
 
     // --- Table total ---
     if (cfg.showTableTotal) {
-      var ttRow = self._makeTotalRow(cfg.tableTotalLabel, data, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue);
+      var ttRow = self._makeTotalRow(cfg.tableTotalLabel, data, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue, valueColStyle);
       ttRow.className = "grouped-tables-table-total-row";
       [].forEach.call(ttRow.children, function (cell) { cell.style.borderTop = "2px solid #ccc"; });
       var spacer = cfg.sectionSpacing > 0 ? self._makeSpacerRow(totalColCount, cfg.sectionSpacing) : null;
@@ -401,6 +444,9 @@ looker.plugins.visualizations.add({
     opts.customValueFormat = Object.assign({}, opts.customValueFormat, {
       hidden: (String(config.valueFormatPreset || "__default__").trim()) !== "__custom__"
     });
+    opts.pivotColumnWidthPx = Object.assign({}, opts.pivotColumnWidthPx, {
+      hidden: (String(config.pivotColumnWidthMode || "auto").trim()) !== "custom"
+    });
     this.options = opts;
     this.trigger("registerOptions", opts);
   },
@@ -437,6 +483,9 @@ looker.plugins.visualizations.add({
       pivotAlign:         str("pivotHeaderAlignment", "left").toLowerCase() === "center" ? "center" : "left",
       replaceZero:        bool("replaceZeroWithDash", true),
       freeze:             bool("freezeNonMeasureColumns", true),
+      fontFamily:         str("tableFontFamily", "Cambria, serif"),
+      valueColWidthMode:  str("pivotColumnWidthMode", "auto"),
+      valueColWidthPx:    Math.max(40, num("pivotColumnWidthPx", 120)),
       showTableTotal:     bool("showTableTotal", false),
       tableTotalPosition: (str("tableTotalPosition", "") || str("table_total_position", "bottom")).indexOf("top") >= 0 ? "top" : "bottom",
       tableTotalLabel:    str("tableTotalLabel", "Total"),
@@ -621,7 +670,7 @@ looker.plugins.visualizations.add({
     return th;
   },
 
-  _createTable: function (freeze) {
+  _createTable: function (freeze, fontFamily) {
     var table = document.createElement("table");
     table.className = "grouped-tables-table" + (freeze ? " grouped-tables-frozen" : "");
     table.setAttribute("border", "0");
@@ -631,7 +680,7 @@ looker.plugins.visualizations.add({
       borderCollapse: "collapse",
       width: "100%",
       tableLayout: "auto",
-      fontFamily: "inherit",
+      fontFamily: fontFamily || "Cambria, serif",
       fontSize: "14px"
     });
     if (freeze) table.style.minWidth = "max-content";
@@ -669,7 +718,7 @@ looker.plugins.visualizations.add({
     return tr;
   },
 
-  _makeTotalRow: function (label, rows, dimColCount, freeze, forEachValueCol, sumRows, formatValue) {
+  _makeTotalRow: function (label, rows, dimColCount, freeze, forEachValueCol, sumRows, formatValue, valueColStyle) {
     var self = this;
     var style = { fontWeight: "bold", padding: "6px 8px", borderTop: "1px solid #ccc", borderBottom: "1px solid #eee" };
     var tr = document.createElement("tr");
@@ -679,7 +728,9 @@ looker.plugins.visualizations.add({
     td.textContent = label;
     tr.appendChild(td);
     forEachValueCol(function (m, pk) {
-      var vtd = self._td(Object.assign({}, style, { textAlign: "right" }));
+      var vtdStyle = Object.assign({}, style, { textAlign: "right" });
+      if (valueColStyle) Object.assign(vtdStyle, valueColStyle);
+      var vtd = self._td(vtdStyle);
       vtd.textContent = formatValue(sumRows(rows, m.name, pk));
       tr.appendChild(vtd);
     });
@@ -696,7 +747,9 @@ looker.plugins.visualizations.add({
     var cfg = ctx.cfg;
 
     function makePivotTh(text) {
-      var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
+      var thStyle = { textAlign: cfg.pivotAlign };
+      if (ctx.valueColStyle) Object.assign(thStyle, ctx.valueColStyle);
+      var th = self._th(cfg.headerColor, thStyle);
       th.textContent = text;
       return th;
     }
@@ -714,7 +767,9 @@ looker.plugins.visualizations.add({
     function appendMeasureRow() {
       var mRow = document.createElement("tr");
       ctx.forEachValueCol(function (m) {
-        var th = self._th(cfg.headerColor, { textAlign: "center" });
+        var thStyle = { textAlign: "center" };
+        if (ctx.valueColStyle) Object.assign(thStyle, ctx.valueColStyle);
+        var th = self._th(cfg.headerColor, thStyle);
         th.textContent = ctx.measureLabels[m.name] || m.name;
         mRow.appendChild(th);
       });
