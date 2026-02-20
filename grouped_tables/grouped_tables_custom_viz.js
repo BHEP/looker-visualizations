@@ -75,9 +75,6 @@ looker.plugins.visualizations.add({
       type: "number",
       label: "Spacing between sections (px)",
       default: 24,
-      min: 0,
-      max: 80,
-      step: 4,
       section: "Grouping",
       order: 12
     },
@@ -159,11 +156,6 @@ looker.plugins.visualizations.add({
       return;
     }
 
-    function clampNumber(value, min, max, fallback) {
-      var n = Number(value);
-      if (!isFinite(n)) return fallback;
-      return Math.max(min, Math.min(max, n));
-    }
     function normalizeHeaderColor(value, fallback) {
       var s = String(value || "").trim();
       return s ? s : fallback;
@@ -205,7 +197,8 @@ looker.plugins.visualizations.add({
     }
     var showMeasureHeaders = !!self._getConfig(config, "showMeasureHeaders", true);
     var showSubTotals = !!self._getConfig(config, "showSubTotals", true);
-    var sectionSpacing = clampNumber(self._getConfig(config, "sectionSpacing", 24), 0, 120, 24);
+    var sectionSpacingRaw = Number(self._getConfig(config, "sectionSpacing", 24));
+    var sectionSpacing = isFinite(sectionSpacingRaw) ? Math.max(0, sectionSpacingRaw) : 24;
     var headerColor = normalizeHeaderColor(self._getConfig(config, "pivotedHeaderColor", "#215C98"), "#215C98");
     var pivotHeaderAlignment = normalizeHeaderAlignment(self._getConfig(config, "pivotHeaderAlignment", "left"), "left");
     var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", true);
@@ -562,22 +555,16 @@ looker.plugins.visualizations.add({
     sections.forEach(function (section, sectionIndex) {
       if (sectionSpacing > 0 && sectionIndex > 0) {
         var spacerRow = document.createElement("tr");
-        spacerRow.style.height = sectionSpacing + "px";
-        spacerRow.style.lineHeight = "0";
-        spacerRow.style.fontSize = "0";
         var spacerCell = document.createElement("td");
         spacerCell.colSpan = totalColumnCount;
         spacerCell.style.height = sectionSpacing + "px";
-        spacerCell.style.minHeight = sectionSpacing + "px";
-        spacerCell.style.maxHeight = sectionSpacing + "px";
         spacerCell.style.border = "none";
         spacerCell.style.background = "transparent";
         spacerCell.style.padding = "0";
         spacerCell.style.lineHeight = "0";
         spacerCell.style.fontSize = "0";
-        spacerCell.style.overflow = "hidden";
         spacerCell.style.verticalAlign = "top";
-        spacerCell.innerHTML = "<div style=\"height:" + sectionSpacing + "px;min-height:" + sectionSpacing + "px;max-height:" + sectionSpacing + "px;overflow:hidden;\"></div>";
+        spacerCell.innerHTML = "<div style=\"display:block;height:" + sectionSpacing + "px;\"></div>";
         spacerRow.appendChild(spacerCell);
         tbody.appendChild(spacerRow);
       }
