@@ -52,20 +52,11 @@ looker.plugins.visualizations.add({
         { "Decimals (0) \u2014 1,235": "dec_0" },
         { "Decimals (1) \u2014 1,234.6": "dec_1" },
         { "Decimals (2) \u2014 1,234.57": "dec_2" },
-        { "Decimals (3) \u2014 1,234.567": "dec_3" },
-        { "Decimals (4) \u2014 1,234.5668": "dec_4" },
         { "Percent (0) \u2014 123,457%": "pct_0" },
         { "Percent (1) \u2014 123,456.7%": "pct_1" },
         { "Percent (2) \u2014 123,456.68%": "pct_2" },
-        { "Percent (3) \u2014 123,456.679%": "pct_3" },
-        { "Percent (4) \u2014 123,456.6789%": "pct_4" },
         { "U.S. Dollars (0) \u2014 $1,235": "usd_0" },
         { "U.S. Dollars (2) \u2014 $1,234.57": "usd_2" },
-        { "British Pounds (0) \u2014 \u00a31,235": "gbp_0" },
-        { "British Pounds (2) \u2014 \u00a31,234.57": "gbp_2" },
-        { "Euros (0) \u2014 \u20ac1,235": "eur_0" },
-        { "Euros (2) \u2014 \u20ac1,234.57": "eur_2" },
-        { "ID \u2014 1235": "id_0" },
         { "Custom...": "__custom__" }
       ]
     },
@@ -182,13 +173,8 @@ looker.plugins.visualizations.add({
 
   _VALUE_FORMAT_MAP: {
     dec_0: "#,##0",     dec_1: "#,##0.0",     dec_2: "#,##0.00",
-    dec_3: "#,##0.000", dec_4: "#,##0.0000",
     pct_0: "0%",        pct_1: "0.0%",        pct_2: "0.00%",
-    pct_3: "0.000%",    pct_4: "0.0000%",
-    usd_0: "$#,##0",    usd_2: "$#,##0.00",
-    gbp_0: "\u00a3#,##0", gbp_2: "\u00a3#,##0.00",
-    eur_0: "\u20ac#,##0", eur_2: "\u20ac#,##0.00",
-    id_0: "0"
+    usd_0: "$#,##0",    usd_2: "$#,##0.00"
   },
 
   _resolveValueFormat: function (preset, custom) {
