@@ -514,7 +514,7 @@ looker.plugins.visualizations.add({
       return Number(val).toFixed(1);
     }
 
-    var tableTotalSpacing = 24;
+    var tableTotalSpacing = sectionSpacing;
     function makeSpacerRow() {
       var tr = document.createElement("tr");
       var spacerCell = document.createElement("td");
@@ -534,7 +534,7 @@ looker.plugins.visualizations.add({
       if (freezeNonMeasureColumns) totalLabel.className = "grouped-tables-col-frozen";
       totalLabel.colSpan = dimensionColumnCount;
       totalLabel.style.fontWeight = "bold";
-      totalLabel.style.padding = (tableTotalSpacing + 6) + "px 8px " + (tableTotalSpacing + 6) + "px";
+      totalLabel.style.padding = "6px 8px";
       totalLabel.style.borderTop = "2px solid #ccc";
       totalLabel.style.borderBottom = "1px solid #eee";
       totalLabel.textContent = tableTotalLabel;
@@ -542,7 +542,7 @@ looker.plugins.visualizations.add({
       forEachValueColumn(function (measure, pk) {
         var td = document.createElement("td");
         td.style.fontWeight = "bold";
-        td.style.padding = (tableTotalSpacing + 6) + "px 8px";
+        td.style.padding = "6px 8px";
         td.style.textAlign = "right";
         td.style.borderTop = "1px solid #ccc";
         td.style.borderBottom = "1px solid #eee";
@@ -642,16 +642,12 @@ looker.plugins.visualizations.add({
 
     if (showTableTotal) {
       var tableTotalRow = makeTableTotalRow();
-      var spacerBefore = makeSpacerRow();
-      var spacerAfter = makeSpacerRow();
       if (tableTotalPosition === "top") {
-        tbody.insertBefore(spacerAfter, tbody.firstChild);
+        if (tableTotalSpacing > 0) tbody.insertBefore(makeSpacerRow(), tbody.firstChild);
         tbody.insertBefore(tableTotalRow, tbody.firstChild);
-        tbody.insertBefore(spacerBefore, tbody.firstChild);
       } else {
-        tbody.appendChild(spacerBefore);
+        if (tableTotalSpacing > 0) tbody.appendChild(makeSpacerRow());
         tbody.appendChild(tableTotalRow);
-        tbody.appendChild(spacerAfter);
       }
     }
 
