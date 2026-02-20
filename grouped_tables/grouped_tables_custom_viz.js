@@ -521,15 +521,24 @@ looker.plugins.visualizations.add({
     var keyParts = {};
     pivotKeys.forEach(function (pk) {
       var entry = pivotMap[pk];
-      if (hasStructuredData && entry && entry.data) {
-        keyParts[pk] = pivotFields.map(function (f) {
-          return entry.data[f.name] || { value: "", rendered: "" };
-        });
-      } else {
-        var p = self._parsePivotKey(pk);
-        if (numPivotFields > 0 && p.length > numPivotFields) p = p.slice(0, numPivotFields);
-        keyParts[pk] = p.map(function (v) { return { value: v, rendered: v }; });
+      var parsed = self._parsePivotKey(pk);
+      if (numPivotFields > 0 && parsed.length > numPivotFields) parsed = parsed.slice(0, numPivotFields);
+
+      var parts = [];
+      for (var l = 0; l < levelCount; l++) {
+        var cell = null;
+        if (hasStructuredData && entry && entry.data && pivotFields[l]) {
+          var raw = entry.data[pivotFields[l].name];
+          if (raw != null) {
+            cell = (typeof raw === "object") ? raw : { value: raw, rendered: String(raw) };
+          }
+        }
+        if (!cell && parsed[l] != null) {
+          cell = { value: parsed[l], rendered: parsed[l] };
+        }
+        parts.push(cell || { value: "", rendered: "" });
       }
+      keyParts[pk] = parts;
     });
 
     function getPart(pk, level) {
