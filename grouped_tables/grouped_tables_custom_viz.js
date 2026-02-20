@@ -25,6 +25,18 @@ looker.plugins.visualizations.add({
       section: "Header",
       order: 2
     },
+    pivotHeaderAlignment: {
+      type: "string",
+      label: "Pivot header alignment",
+      display: "select",
+      values: [
+        { "Left": "left" },
+        { "Center": "center" }
+      ],
+      default: "left",
+      section: "Header",
+      order: 3
+    },
 
     // --- Display ---
     replaceZeroWithDash: {
@@ -156,6 +168,10 @@ looker.plugins.visualizations.add({
       var s = String(value || "").trim();
       return s ? s : fallback;
     }
+    function normalizeHeaderAlignment(value, fallback) {
+      var s = String(value || fallback || "").toLowerCase().trim();
+      return s === "center" ? "center" : "left";
+    }
     function getFieldLabel(field, fallback) {
       if (!field) return fallback;
       var label = field.label_short || field.label || field.name || fallback;
@@ -191,6 +207,7 @@ looker.plugins.visualizations.add({
     var showSubTotals = !!self._getConfig(config, "showSubTotals", true);
     var sectionSpacing = clampNumber(self._getConfig(config, "sectionSpacing", 24), 0, 120, 24);
     var headerColor = normalizeHeaderColor(self._getConfig(config, "pivotedHeaderColor", "#215C98"), "#215C98");
+    var pivotHeaderAlignment = normalizeHeaderAlignment(self._getConfig(config, "pivotHeaderAlignment", "left"), "left");
     var replaceZeroWithDash = !!self._getConfig(config, "replaceZeroWithDash", true);
     var freezeNonMeasureColumns = !!self._getConfig(config, "freezeNonMeasureColumns", true);
     var showTableTotal = !!self._getConfig(config, "showTableTotal", false);
@@ -404,7 +421,7 @@ looker.plugins.visualizations.add({
         row.appendChild(th);
       });
     }
-    var numHeaderRowsHierarchical = 1 + pivotLevelCount;
+    var numHeaderRowsHierarchical = 1 + pivotLevelCount + (showMeasureHeaders ? 1 : 0);
     var numHeaderRows = 1 + (hasHierarchicalPivots ? pivotLevelCount : 0) + (showMeasureHeaders && !hasHierarchicalPivots ? 1 : 0);
 
     if (hasHierarchicalPivots && pivotMeta.length) {
@@ -430,7 +447,7 @@ looker.plugins.visualizations.add({
           groups.forEach(function (g) {
             var th = document.createElement("th");
             styleTh(th);
-            th.style.textAlign = "center";
+            th.style.textAlign = pivotHeaderAlignment;
             th.colSpan = g.count;
             th.textContent = getPivotPart(pivotKeys[keyIndex], level);
             keyIndex += g.count;
@@ -438,6 +455,17 @@ looker.plugins.visualizations.add({
           });
         });
         thead.appendChild(row);
+      }
+      if (showMeasureHeaders) {
+        var hierarchicalMeasureRow = document.createElement("tr");
+        forEachValueColumn(function (measure) {
+          var th = document.createElement("th");
+          styleTh(th);
+          th.style.textAlign = "center";
+          th.textContent = measureLabels[measure.name] || measure.name;
+          hierarchicalMeasureRow.appendChild(th);
+        });
+        thead.appendChild(hierarchicalMeasureRow);
       }
     } else {
       // --- Single-level pivot headers (no "|" in keys)
@@ -448,7 +476,7 @@ looker.plugins.visualizations.add({
         forEachValueColumn(function (_measure, pk) {
           var th = document.createElement("th");
           styleTh(th);
-          th.style.textAlign = "center";
+          th.style.textAlign = pivotHeaderAlignment;
           th.textContent = displayPivotLabel(pivotLabels[pk] || pk);
           pivotHeaderRow.appendChild(th);
         });
@@ -456,7 +484,7 @@ looker.plugins.visualizations.add({
         measures.forEach(function (m) {
           var th = document.createElement("th");
           styleTh(th);
-          th.style.textAlign = "center";
+          th.style.textAlign = pivotHeaderAlignment;
           th.textContent = pivotLabels[m.name] || m.name;
           pivotHeaderRow.appendChild(th);
         });
