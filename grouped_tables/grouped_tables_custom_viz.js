@@ -40,6 +40,45 @@ looker.plugins.visualizations.add({
       section: "Display",
       order: 5
     },
+    valueFormatPreset: {
+      type: "string",
+      label: "Value format",
+      display: "select",
+      section: "Display",
+      order: 5.5,
+      default: "__default__",
+      values: [
+        { "Default formatting": "__default__" },
+        { "Decimals (0) \u2014 1,235": "dec_0" },
+        { "Decimals (1) \u2014 1,234.6": "dec_1" },
+        { "Decimals (2) \u2014 1,234.57": "dec_2" },
+        { "Decimals (3) \u2014 1,234.567": "dec_3" },
+        { "Decimals (4) \u2014 1,234.5668": "dec_4" },
+        { "Percent (0) \u2014 123,457%": "pct_0" },
+        { "Percent (1) \u2014 123,456.7%": "pct_1" },
+        { "Percent (2) \u2014 123,456.68%": "pct_2" },
+        { "Percent (3) \u2014 123,456.679%": "pct_3" },
+        { "Percent (4) \u2014 123,456.6789%": "pct_4" },
+        { "U.S. Dollars (0) \u2014 $1,235": "usd_0" },
+        { "U.S. Dollars (2) \u2014 $1,234.57": "usd_2" },
+        { "British Pounds (0) \u2014 \u00a31,235": "gbp_0" },
+        { "British Pounds (2) \u2014 \u00a31,234.57": "gbp_2" },
+        { "Euros (0) \u2014 \u20ac1,235": "eur_0" },
+        { "Euros (2) \u2014 \u20ac1,234.57": "eur_2" },
+        { "ID \u2014 1235": "id_0" },
+        { "Custom...": "__custom__" }
+      ]
+    },
+    customValueFormat: {
+      type: "string",
+      label: "Custom value format",
+      default: "",
+      display: "text",
+      placeholder: "Examples: $#,##0.00, 0.0%, 0.000,, \"M\"",
+      description: "Value format syntax docs: https://docs.cloud.google.com/looker/docs/custom-formatting?version=26.2&is_cloud_provider_native=false",
+      section: "Display",
+      order: 5.6
+    },
     freezeNonMeasureColumns: {
       type: "boolean",
       label: "Freeze non-measure columns",
@@ -131,6 +170,92 @@ looker.plugins.visualizations.add({
     return (v == null || String(v).trim() === "") ? (fallback || "") : String(v);
   },
 
+  _valueFormatPatternFromPreset: function (preset, customPattern) {
+    var p = String(preset || "__default__").trim();
+    var custom = String(customPattern || "").trim();
+    if (p === "__custom__") return custom;
+    if (p === "__default__") return "";
+
+    var map = {
+      dec_0: "#,##0",
+      dec_1: "#,##0.0",
+      dec_2: "#,##0.00",
+      dec_3: "#,##0.000",
+      dec_4: "#,##0.0000",
+      pct_0: "0%",
+      pct_1: "0.0%",
+      pct_2: "0.00%",
+      pct_3: "0.000%",
+      pct_4: "0.0000%",
+      usd_0: "$#,##0",
+      usd_2: "$#,##0.00",
+      gbp_0: "\u00a3#,##0",
+      gbp_2: "\u00a3#,##0.00",
+      eur_0: "\u20ac#,##0",
+      eur_2: "\u20ac#,##0.00",
+      id_0: "0"
+    };
+    return map[p] || "";
+  },
+
+  _applyValueFormat: function (val, pattern) {
+    if (val == null || isNaN(val)) return "";
+    var fmt = String(pattern || "").trim();
+    if (!fmt) return String(val);
+
+    var sections = fmt.split(";");
+    var isNeg = Number(val) < 0;
+    var active = (isNeg && sections[1]) ? sections[1] : sections[0];
+    var parenNeg = active.indexOf("(") >= 0 && active.indexOf(")") >= 0;
+    var absVal = Math.abs(Number(val));
+
+    var hasPct = /(^|[^\\])%/.test(active);
+    if (hasPct) absVal *= 100;
+
+    var literalMatches = [];
+    active.replace(/"([^"]*)"/g, function (_m, txt) { literalMatches.push(txt); return _m; });
+    var literalText = literalMatches.join("");
+
+    var core = active
+      .replace(/\(.*?\)/g, "")
+      .replace(/"[^"]*"/g, "")
+      .replace(/\\%/g, "%")
+      .replace(/%/g, "")
+      .trim();
+    var symbolMatch = core.match(/^([$£€])/);
+    var currency = symbolMatch ? symbolMatch[1] : "";
+
+    var firstDigit = core.search(/[0#]/);
+    var lastDigit = Math.max(core.lastIndexOf("0"), core.lastIndexOf("#"));
+    var numericPart = (firstDigit >= 0 && lastDigit >= firstDigit) ? core.slice(firstDigit, lastDigit + 1) : "";
+
+    var dot = numericPart.indexOf(".");
+    var fracPattern = dot >= 0 ? numericPart.slice(dot + 1) : "";
+    var minFrac = (fracPattern.match(/0/g) || []).length;
+    var maxFrac = fracPattern.length;
+    var useGrouping = numericPart.indexOf(",") >= 0;
+
+    var scalePart = numericPart;
+    var commas = 0;
+    while (scalePart.endsWith(",")) {
+      commas++;
+      scalePart = scalePart.slice(0, -1);
+    }
+    if (commas > 0) absVal = absVal / Math.pow(1000, commas);
+
+    var numText = absVal.toLocaleString(undefined, {
+      minimumFractionDigits: minFrac,
+      maximumFractionDigits: maxFrac,
+      useGrouping: useGrouping
+    });
+
+    var out = currency + numText + literalText;
+    if (hasPct) out += "%";
+    if (isNeg && !parenNeg) out = "-" + out;
+    if (isNeg && parenNeg) out = "(" + out + ")";
+    return out;
+  },
+
   _isNullPivot: function (val) {
     if (val == null) return true;
     var s = String(val).trim();
@@ -169,12 +294,13 @@ looker.plugins.visualizations.add({
     var cfg = self._resolveConfig(config, dims, measures, pivotMeta);
 
     // --- Pivot analysis ---------------------------------------------------------
+    var pivotFields = qr.fields.pivots || [];
     var pivot = self._analyzePivots(pivotMeta, measures);
     var pivotKeys   = pivot.keys;
     var pivotLabels = pivot.labels;
 
     // --- Pivot hierarchy --------------------------------------------------------
-    var hierarchy = self._analyzeHierarchy(pivotKeys, measures);
+    var hierarchy = self._analyzeHierarchy(pivotMeta, pivotFields, measures, pivotKeys);
 
     // --- Layout counts ----------------------------------------------------------
     var displayDims = cfg.groupDim
@@ -206,6 +332,8 @@ looker.plugins.visualizations.add({
     function formatValue(val) {
       if (val == null || isNaN(val)) return "";
       if (cfg.replaceZero && Number(val) === 0) return "\u2013";
+      var pattern = self._valueFormatPatternFromPreset(cfg.valueFormatPreset, cfg.valueFormatCustom);
+      if (pattern) return self._applyValueFormat(val, pattern);
       return Number(val) === Math.floor(val) ? String(Math.floor(val)) : Number(val).toFixed(1);
     }
 
@@ -223,7 +351,7 @@ looker.plugins.visualizations.add({
     // --- Header -----------------------------------------------------------------
     self._renderHeader(thead, {
       displayDims: displayDims, measures: measures, pivotMeta: pivotMeta,
-      pivotKeys: pivotKeys, pivotLabels: pivotLabels,
+      pivotKeys: pivotKeys, pivotLabels: pivotLabels, pivotFields: pivotFields,
       hierarchy: hierarchy, measureLabels: measureLabels,
       cfg: cfg, forEachValueCol: forEachValueCol
     });
@@ -325,6 +453,8 @@ looker.plugins.visualizations.add({
     var headerColor = String(c("pivotedHeaderColor", "#215C98") || "#215C98").trim() || "#215C98";
     var alignRaw = String(c("pivotHeaderAlignment", "left") || "left").toLowerCase().trim();
     var spacingRaw = Number(c("sectionSpacing", 24));
+    var valueFormatPreset = String(c("valueFormatPreset", "__default__") || "__default__").trim();
+    var valueFormatCustom = String(c("customValueFormat", "") || "").trim();
 
     return {
       groupDim: groupDim,
@@ -337,7 +467,9 @@ looker.plugins.visualizations.add({
       freeze:             !!c("freezeNonMeasureColumns", true),
       showTableTotal:     !!c("showTableTotal", false),
       tableTotalPosition: String(posRaw || "").toLowerCase().indexOf("top") >= 0 ? "top" : "bottom",
-      tableTotalLabel:    String(c("tableTotalLabel", "Total") || "Total").trim() || "Total"
+      tableTotalLabel:    String(c("tableTotalLabel", "Total") || "Total").trim() || "Total",
+      valueFormatPreset:  valueFormatPreset,
+      valueFormatCustom:  valueFormatCustom
     };
   },
 
@@ -375,49 +507,65 @@ looker.plugins.visualizations.add({
     return { keys: keys, labels: labels };
   },
 
-  _analyzeHierarchy: function (pivotKeys, measures) {
+  _analyzeHierarchy: function (pivotMeta, pivotFields, measures, pivotKeys) {
     var self = this;
-    var parts = pivotKeys.map(function (pk) { return self._parsePivotKey(pk); });
-    var numLevels = parts.length ? Math.max.apply(null, parts.map(function (p) { return p.length; })) : 0;
-    var measureNames = measures.map(function (m) { return m.name; });
+    var numPivotFields = pivotFields.length;
 
-    var middleIsMeasure = numLevels >= 3 && measures.some(function (m) {
-      return parts.some(function (p) { return p[1] === m.name; });
-    });
-    var levelCount = middleIsMeasure && numLevels >= 3 ? 2 : (numLevels >= 2 ? Math.min(numLevels, 10) : 1);
-    var isHierarchical = pivotKeys.length > 0 && numLevels >= 2;
+    var pivotMap = {};
+    pivotMeta.forEach(function (p) { pivotMap[p.key] = p; });
 
-    function isMeasureOrBlank(val) {
-      if (val == null || String(val).trim() === "") return true;
-      return measureNames.indexOf(String(val).trim()) >= 0;
+    var hasStructuredData = numPivotFields > 0 && pivotMeta.length > 0 &&
+      pivotMeta[0].data != null && typeof pivotMeta[0].data === "object";
+
+    var levelCount, isHierarchical;
+
+    if (hasStructuredData) {
+      levelCount = numPivotFields;
+      isHierarchical = numPivotFields >= 2;
+    } else if (pivotMeta.length > 0 && pivotKeys.length > 0) {
+      var parsed = pivotKeys.map(function (pk) { return self._parsePivotKey(pk); });
+      var maxParts = Math.max.apply(null, parsed.map(function (p) { return p.length; }));
+      levelCount = maxParts;
+      isHierarchical = maxParts >= 2;
+    } else {
+      levelCount = pivotMeta.length > 0 ? 1 : 0;
+      isHierarchical = false;
     }
 
     function getPart(pk, level) {
-      if (pk == null) return "";
-      var p = self._parsePivotKey(pk);
-      var raw;
-      if (p.length === 1) {
-        return level === 0 ? "" : (isMeasureOrBlank(p[0]) || self._isNullPivot(p[0]) ? "" : p[0]);
+      if (level >= levelCount) return "";
+      var entry = pivotMap[pk];
+      if (entry && entry.is_total) return level === 0 ? "Total" : "";
+
+      if (hasStructuredData && entry && entry.data && pivotFields[level]) {
+        var cell = entry.data[pivotFields[level].name];
+        if (!cell) return "";
+        var val = (cell.rendered != null && cell.rendered !== "") ? cell.rendered : cell.value;
+        if (val == null || self._isNullPivot(val)) return "";
+        return String(val).trim();
       }
-      if (middleIsMeasure && p.length >= 3) {
-        raw = level === 0 ? p[0] : (level === 1 ? p[2] : p[level]);
-      } else {
-        raw = p[level] != null ? p[level] : (level === 0 ? "" : pk);
-      }
-      if (raw == null || raw === "") return "";
-      if (isMeasureOrBlank(raw) || self._isNullPivot(raw)) return "";
-      return String(raw).trim();
+
+      var parts = self._parsePivotKey(pk);
+      var raw = parts[level] != null ? parts[level] : "";
+      return self._isNullPivot(raw) ? "" : String(raw).trim();
     }
 
     function getTuple(pk, upToLevel) {
-      if (pk == null) return "";
-      var p = self._parsePivotKey(pk);
-      if (middleIsMeasure && p.length >= 3) {
-        var out = [p[0]];
-        if (upToLevel >= 1) out.push(p[2]);
-        return out.join("\0");
+      var entry = pivotMap[pk];
+
+      if (hasStructuredData && entry && entry.data) {
+        var tparts = [];
+        for (var l = 0; l <= upToLevel && l < levelCount; l++) {
+          if (pivotFields[l]) {
+            var cell = entry.data[pivotFields[l].name];
+            tparts.push(cell ? String(cell.value != null ? cell.value : "") : "");
+          }
+        }
+        return tparts.join("\0");
       }
-      return p.slice(0, upToLevel + 1).join("\0");
+
+      var parsed = self._parsePivotKey(pk);
+      return parsed.slice(0, upToLevel + 1).join("\0");
     }
 
     function groupConsecutive(arr, fn) {
@@ -433,7 +581,6 @@ looker.plugins.visualizations.add({
     return {
       isHierarchical: isHierarchical,
       levelCount: levelCount,
-      middleIsMeasure: middleIsMeasure,
       getPart: getPart,
       getTuple: getTuple,
       groupConsecutive: groupConsecutive
@@ -588,7 +735,7 @@ looker.plugins.visualizations.add({
     }
 
     if (h.isHierarchical && ctx.pivotMeta.length) {
-      var totalHeaderRows = 1 + h.levelCount + (cfg.showMeasureHeaders ? 1 : 0);
+      var totalHeaderRows = h.levelCount + (cfg.showMeasureHeaders ? 1 : 0);
       for (var level = 0; level < h.levelCount; level++) {
         var row = document.createElement("tr");
         if (level === 0) appendDimCells(row, totalHeaderRows);
