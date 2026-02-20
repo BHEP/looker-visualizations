@@ -76,6 +76,7 @@ looker.plugins.visualizations.add({
       display: "text",
       placeholder: "Examples: $#,##0.00, 0.0%, 0.000,, \"M\"",
       description: "Value format syntax docs: https://docs.cloud.google.com/looker/docs/custom-formatting?version=26.2&is_cloud_provider_native=false",
+      hidden: function (config) { return (config.valueFormatPreset || "__default__") !== "__custom__"; },
       section: "Display",
       order: 5.6
     },
@@ -145,12 +146,8 @@ looker.plugins.visualizations.add({
   },
 
   // ---------------------------------------------------------------------------
-  // Helpers (stateless)
+  // Helpers
   // ---------------------------------------------------------------------------
-
-  _cfg: function (config, key, fallback) {
-    return config[key] !== undefined ? config[key] : fallback;
-  },
 
   _num: function (obj) {
     if (!obj) return 0;
@@ -158,44 +155,47 @@ looker.plugins.visualizations.add({
     return isFinite(v) ? v : 0;
   },
 
+  _renderedValue: function (cell) {
+    if (!cell) return null;
+    return (cell.rendered != null && cell.rendered !== "") ? cell.rendered : cell.value;
+  },
+
   _fieldLabel: function (field, fallback) {
     if (!field) return fallback;
-    var l = String(field.label_short || field.label || field.name || fallback || "").trim();
-    return l || fallback;
+    return String(field.label_short || field.label || field.name || fallback || "").trim() || fallback;
   },
 
   _cellText: function (cell, fallback) {
-    if (!cell) return fallback || "";
-    var v = (cell.rendered != null && cell.rendered !== "") ? cell.rendered : cell.value;
+    var v = this._renderedValue(cell);
     return (v == null || String(v).trim() === "") ? (fallback || "") : String(v);
   },
 
-  _valueFormatPatternFromPreset: function (preset, customPattern) {
-    var p = String(preset || "__default__").trim();
-    var custom = String(customPattern || "").trim();
-    if (p === "__custom__") return custom;
-    if (p === "__default__") return "";
+  _isNullPivot: function (val) {
+    if (val == null) return true;
+    var s = String(val).trim();
+    return s === "" || s === "null" || s.indexOf("___null") >= 0;
+  },
 
-    var map = {
-      dec_0: "#,##0",
-      dec_1: "#,##0.0",
-      dec_2: "#,##0.00",
-      dec_3: "#,##0.000",
-      dec_4: "#,##0.0000",
-      pct_0: "0%",
-      pct_1: "0.0%",
-      pct_2: "0.00%",
-      pct_3: "0.000%",
-      pct_4: "0.0000%",
-      usd_0: "$#,##0",
-      usd_2: "$#,##0.00",
-      gbp_0: "\u00a3#,##0",
-      gbp_2: "\u00a3#,##0.00",
-      eur_0: "\u20ac#,##0",
-      eur_2: "\u20ac#,##0.00",
-      id_0: "0"
-    };
-    return map[p] || "";
+  // ---------------------------------------------------------------------------
+  // Value formatting
+  // ---------------------------------------------------------------------------
+
+  _VALUE_FORMAT_MAP: {
+    dec_0: "#,##0",     dec_1: "#,##0.0",     dec_2: "#,##0.00",
+    dec_3: "#,##0.000", dec_4: "#,##0.0000",
+    pct_0: "0%",        pct_1: "0.0%",        pct_2: "0.00%",
+    pct_3: "0.000%",    pct_4: "0.0000%",
+    usd_0: "$#,##0",    usd_2: "$#,##0.00",
+    gbp_0: "\u00a3#,##0", gbp_2: "\u00a3#,##0.00",
+    eur_0: "\u20ac#,##0", eur_2: "\u20ac#,##0.00",
+    id_0: "0"
+  },
+
+  _resolveValueFormat: function (preset, custom) {
+    var p = String(preset || "__default__").trim();
+    if (p === "__custom__") return String(custom || "").trim();
+    if (p === "__default__") return "";
+    return this._VALUE_FORMAT_MAP[p] || "";
   },
 
   _applyValueFormat: function (val, pattern) {
@@ -212,9 +212,8 @@ looker.plugins.visualizations.add({
     var hasPct = /(^|[^\\])%/.test(active);
     if (hasPct) absVal *= 100;
 
-    var literalMatches = [];
-    active.replace(/"([^"]*)"/g, function (_m, txt) { literalMatches.push(txt); return _m; });
-    var literalText = literalMatches.join("");
+    var literals = [];
+    active.replace(/"([^"]*)"/g, function (_m, txt) { literals.push(txt); return _m; });
 
     var core = active
       .replace(/\(.*?\)/g, "")
@@ -222,26 +221,22 @@ looker.plugins.visualizations.add({
       .replace(/\\%/g, "%")
       .replace(/%/g, "")
       .trim();
-    var symbolMatch = core.match(/^([$£€])/);
-    var currency = symbolMatch ? symbolMatch[1] : "";
 
+    var currency = (core.match(/^([$\u00a3\u20ac])/) || [])[1] || "";
     var firstDigit = core.search(/[0#]/);
     var lastDigit = Math.max(core.lastIndexOf("0"), core.lastIndexOf("#"));
-    var numericPart = (firstDigit >= 0 && lastDigit >= firstDigit) ? core.slice(firstDigit, lastDigit + 1) : "";
+    var numPart = (firstDigit >= 0 && lastDigit >= firstDigit) ? core.slice(firstDigit, lastDigit + 1) : "";
 
-    var dot = numericPart.indexOf(".");
-    var fracPattern = dot >= 0 ? numericPart.slice(dot + 1) : "";
+    var dot = numPart.indexOf(".");
+    var fracPattern = dot >= 0 ? numPart.slice(dot + 1) : "";
     var minFrac = (fracPattern.match(/0/g) || []).length;
     var maxFrac = fracPattern.length;
-    var useGrouping = numericPart.indexOf(",") >= 0;
+    var useGrouping = numPart.indexOf(",") >= 0;
 
-    var scalePart = numericPart;
-    var commas = 0;
-    while (scalePart.endsWith(",")) {
-      commas++;
-      scalePart = scalePart.slice(0, -1);
-    }
-    if (commas > 0) absVal = absVal / Math.pow(1000, commas);
+    var trailingCommas = 0;
+    var trimmed = numPart;
+    while (trimmed.endsWith(",")) { trailingCommas++; trimmed = trimmed.slice(0, -1); }
+    if (trailingCommas > 0) absVal /= Math.pow(1000, trailingCommas);
 
     var numText = absVal.toLocaleString(undefined, {
       minimumFractionDigits: minFrac,
@@ -249,17 +244,11 @@ looker.plugins.visualizations.add({
       useGrouping: useGrouping
     });
 
-    var out = currency + numText + literalText;
+    var out = currency + numText + literals.join("");
     if (hasPct) out += "%";
     if (isNeg && !parenNeg) out = "-" + out;
     if (isNeg && parenNeg) out = "(" + out + ")";
     return out;
-  },
-
-  _isNullPivot: function (val) {
-    if (val == null) return true;
-    var s = String(val).trim();
-    return s === "" || s === "null" || s.indexOf("___null") >= 0;
   },
 
   // ---------------------------------------------------------------------------
@@ -281,83 +270,75 @@ looker.plugins.visualizations.add({
 
   _render: function (data, config, qr, container) {
     var self = this;
-    var dims     = qr.fields.dimension_like || [];
-    var measures  = qr.fields.measure_like  || [];
-    var pivotMeta = qr.pivots || [];
+    var dims        = qr.fields.dimension_like || [];
+    var measures    = qr.fields.measure_like  || [];
+    var pivotMeta   = qr.pivots || [];
+    var pivotFields = qr.fields.pivots || [];
+    var hasPivots   = pivotMeta.length > 0;
 
     if (!dims.length)     { container.innerHTML = "<p>Add at least one dimension.</p>"; return; }
     if (!measures.length) { container.innerHTML = "<p>Add at least one measure.</p>";   return; }
 
-    // --- Config -----------------------------------------------------------------
     self._registerGroupByOptions(dims);
+    var cfg = self._resolveConfig(config, dims);
 
-    var cfg = self._resolveConfig(config, dims, measures, pivotMeta);
-
-    // --- Pivot analysis ---------------------------------------------------------
-    var pivotFields = qr.fields.pivots || [];
-    var pivot = self._analyzePivots(pivotMeta, measures);
+    var pivot       = self._analyzePivots(pivotMeta, measures, pivotFields);
     var pivotKeys   = pivot.keys;
-    var pivotLabels = pivot.labels;
+    var hierarchy   = self._analyzeHierarchy(pivotMeta, pivotFields, pivotKeys);
+    var valueFormat = self._resolveValueFormat(cfg.valueFormatPreset, cfg.valueFormatCustom);
 
-    // --- Pivot hierarchy --------------------------------------------------------
-    var hierarchy = self._analyzeHierarchy(pivotMeta, pivotFields, measures, pivotKeys);
-
-    // --- Layout counts ----------------------------------------------------------
     var displayDims = cfg.groupDim
       ? dims.filter(function (d) { return d !== cfg.groupDim; })
       : dims.slice();
     if (!displayDims.length) displayDims = [dims[0]];
 
     var dimColCount   = displayDims.length;
-    var valueColCount = pivotMeta.length ? measures.length * pivotKeys.length : measures.length;
+    var valueColCount = hasPivots ? measures.length * pivotKeys.length : measures.length;
     var totalColCount = dimColCount + valueColCount;
 
-    // --- Iteration helper -------------------------------------------------------
     function forEachValueCol(cb) {
-      if (pivotMeta.length) {
+      if (hasPivots) {
         measures.forEach(function (m) { pivotKeys.forEach(function (pk) { cb(m, pk); }); });
       } else {
         measures.forEach(function (m) { cb(m, m.name); });
       }
     }
 
-    // --- Cell helpers -----------------------------------------------------------
     function cellValue(row, mName, pk) {
-      var obj = pivotMeta.length ? (row[mName] && row[mName][pk]) : row[mName];
-      return self._num(obj);
+      return self._num(hasPivots ? (row[mName] && row[mName][pk]) : row[mName]);
     }
+
     function sumRows(rows, mName, pk) {
-      var s = 0; rows.forEach(function (r) { s += cellValue(r, mName, pk); }); return s;
+      var s = 0;
+      rows.forEach(function (r) { s += cellValue(r, mName, pk); });
+      return s;
     }
+
     function formatValue(val) {
       if (val == null || isNaN(val)) return "";
       if (cfg.replaceZero && Number(val) === 0) return "\u2013";
-      var pattern = self._valueFormatPatternFromPreset(cfg.valueFormatPreset, cfg.valueFormatCustom);
-      if (pattern) return self._applyValueFormat(val, pattern);
+      if (valueFormat) return self._applyValueFormat(val, valueFormat);
       return Number(val) === Math.floor(val) ? String(Math.floor(val)) : Number(val).toFixed(1);
     }
 
-    // --- Sections ---------------------------------------------------------------
+    // --- Build table ---
     var sections = self._buildSections(data, cfg.groupDim);
-
-    // --- DOM: table + thead + tbody ---------------------------------------------
     var table = self._createTable(cfg.freeze);
     var thead = document.createElement("thead");
     var tbody = document.createElement("tbody");
 
     var measureLabels = {};
-    measures.forEach(function (m) { measureLabels[m.name] = m.label_short || m.label || m.name; });
+    measures.forEach(function (m) { measureLabels[m.name] = self._fieldLabel(m, m.name); });
 
-    // --- Header -----------------------------------------------------------------
     self._renderHeader(thead, {
       displayDims: displayDims, measures: measures, pivotMeta: pivotMeta,
-      pivotKeys: pivotKeys, pivotLabels: pivotLabels, pivotFields: pivotFields,
+      pivotKeys: pivotKeys, pivotLabels: pivot.labels, pivotFields: pivotFields,
       hierarchy: hierarchy, measureLabels: measureLabels,
       cfg: cfg, forEachValueCol: forEachValueCol
     });
     table.appendChild(thead);
 
-    // --- Body: sections ---------------------------------------------------------
+    // --- Body: sections ---
     sections.forEach(function (section, idx) {
       if (cfg.sectionSpacing > 0 && idx > 0) {
         tbody.appendChild(self._makeSpacerRow(totalColCount, cfg.sectionSpacing));
@@ -385,23 +366,24 @@ looker.plugins.visualizations.add({
       }
     });
 
-    // --- Table total ------------------------------------------------------------
+    // --- Table total ---
     if (cfg.showTableTotal) {
       var ttRow = self._makeTotalRow(cfg.tableTotalLabel, data, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue);
       ttRow.className = "grouped-tables-table-total-row";
       [].forEach.call(ttRow.children, function (cell) { cell.style.borderTop = "2px solid #ccc"; });
+      var spacer = cfg.sectionSpacing > 0 ? self._makeSpacerRow(totalColCount, cfg.sectionSpacing) : null;
       if (cfg.tableTotalPosition === "top") {
-        if (cfg.sectionSpacing > 0) tbody.insertBefore(self._makeSpacerRow(totalColCount, cfg.sectionSpacing), tbody.firstChild);
+        if (spacer) tbody.insertBefore(spacer, tbody.firstChild);
         tbody.insertBefore(ttRow, tbody.firstChild);
       } else {
-        if (cfg.sectionSpacing > 0) tbody.appendChild(self._makeSpacerRow(totalColCount, cfg.sectionSpacing));
+        if (spacer) tbody.appendChild(spacer);
         tbody.appendChild(ttRow);
       }
     }
 
     table.appendChild(tbody);
 
-    // --- Mount + freeze styling -------------------------------------------------
+    // --- Mount ---
     container.innerHTML = "";
     if (cfg.freeze) {
       container.style.overflow = "hidden";
@@ -434,42 +416,43 @@ looker.plugins.visualizations.add({
     this.trigger("registerOptions", opts);
   },
 
-  _resolveConfig: function (config, dims, measures, pivotMeta) {
+  _resolveConfig: function (config, dims) {
     var self = this;
-    var c = function (k, d) { return self._cfg(config, k, d); };
 
-    var groupByField = (c("groupByDimension", "__none__") || "").trim();
-    if (groupByField === "") {
-      groupByField = dims.length >= 2 ? dims[0].name : "__none__";
+    function str(key, fallback) {
+      var v = config[key];
+      return (v != null ? String(v).trim() : "") || fallback;
     }
+    function bool(key, fallback) {
+      return config[key] != null ? !!config[key] : fallback;
+    }
+    function num(key, fallback) {
+      var v = Number(config[key]);
+      return isFinite(v) ? v : fallback;
+    }
+
+    var groupByField = str("groupByDimension", dims.length >= 2 ? dims[0].name : "__none__");
     var groupDim = null;
-    if (groupByField && groupByField !== "__none__") {
+    if (groupByField !== "__none__") {
       groupDim = dims.find(function (d) { return d.name === groupByField; })
               || dims.find(function (d) { return self._fieldLabel(d, d.name) === groupByField; })
               || null;
     }
 
-    var posRaw = c("tableTotalPosition", "bottom") || c("table_total_position", "bottom");
-    var headerColor = String(c("pivotedHeaderColor", "#215C98") || "#215C98").trim() || "#215C98";
-    var alignRaw = String(c("pivotHeaderAlignment", "left") || "left").toLowerCase().trim();
-    var spacingRaw = Number(c("sectionSpacing", 24));
-    var valueFormatPreset = String(c("valueFormatPreset", "__default__") || "__default__").trim();
-    var valueFormatCustom = String(c("customValueFormat", "") || "").trim();
-
     return {
-      groupDim: groupDim,
-      showMeasureHeaders: !!c("showMeasureHeaders", true),
-      showSubTotals:      !!c("showSubTotals", true),
-      sectionSpacing:     isFinite(spacingRaw) ? Math.max(0, spacingRaw) : 24,
-      headerColor:        headerColor,
-      pivotAlign:         alignRaw === "center" ? "center" : "left",
-      replaceZero:        !!c("replaceZeroWithDash", true),
-      freeze:             !!c("freezeNonMeasureColumns", true),
-      showTableTotal:     !!c("showTableTotal", false),
-      tableTotalPosition: String(posRaw || "").toLowerCase().indexOf("top") >= 0 ? "top" : "bottom",
-      tableTotalLabel:    String(c("tableTotalLabel", "Total") || "Total").trim() || "Total",
-      valueFormatPreset:  valueFormatPreset,
-      valueFormatCustom:  valueFormatCustom
+      groupDim:           groupDim,
+      showMeasureHeaders: bool("showMeasureHeaders", true),
+      showSubTotals:      bool("showSubTotals", true),
+      sectionSpacing:     Math.max(0, num("sectionSpacing", 24)),
+      headerColor:        str("pivotedHeaderColor", "#215C98"),
+      pivotAlign:         str("pivotHeaderAlignment", "left").toLowerCase() === "center" ? "center" : "left",
+      replaceZero:        bool("replaceZeroWithDash", true),
+      freeze:             bool("freezeNonMeasureColumns", true),
+      showTableTotal:     bool("showTableTotal", false),
+      tableTotalPosition: (str("tableTotalPosition", "") || str("table_total_position", "bottom")).indexOf("top") >= 0 ? "top" : "bottom",
+      tableTotalLabel:    str("tableTotalLabel", "Total"),
+      valueFormatPreset:  str("valueFormatPreset", "__default__"),
+      valueFormatCustom:  str("customValueFormat", "")
     };
   },
 
@@ -491,23 +474,37 @@ looker.plugins.visualizations.add({
     return [s];
   },
 
-  _analyzePivots: function (pivotMeta, measures) {
+  _analyzePivots: function (pivotMeta, measures, pivotFields) {
     var self = this;
     var keys = [], labels = {};
+
     if (pivotMeta.length) {
       keys = pivotMeta.map(function (p) { return p.key; });
       pivotMeta.forEach(function (p) {
-        var l = p.is_total ? "Total" : (p.label_short || p.label || p.key);
+        if (p.is_total) { labels[p.key] = "Total"; return; }
+
+        if (p.data && pivotFields && pivotFields.length > 0) {
+          var parts = [];
+          pivotFields.forEach(function (f) {
+            var v = self._renderedValue(p.data[f.name]);
+            if (v != null && !self._isNullPivot(v)) parts.push(String(v).trim());
+          });
+          if (parts.length > 0) { labels[p.key] = parts.join(" \u2013 "); return; }
+        }
+
+        var l = String(p.label_short || p.label || p.key || "");
+        if (l.indexOf("|FIELD|") >= 0) l = l.split("|FIELD|")[0].trim();
         labels[p.key] = self._isNullPivot(l) ? "" : l;
       });
     } else {
       keys = measures.map(function (m) { return m.name; });
-      measures.forEach(function (m) { labels[m.name] = m.label_short || m.label || m.name; });
+      measures.forEach(function (m) { labels[m.name] = self._fieldLabel(m, m.name); });
     }
+
     return { keys: keys, labels: labels };
   },
 
-  _analyzeHierarchy: function (pivotMeta, pivotFields, measures, pivotKeys) {
+  _analyzeHierarchy: function (pivotMeta, pivotFields, pivotKeys) {
     var self = this;
     var numPivotFields = pivotFields.length;
 
@@ -519,7 +516,7 @@ looker.plugins.visualizations.add({
 
     var levelCount, isHierarchical;
 
-    if (hasStructuredData) {
+    if (numPivotFields > 0) {
       levelCount = numPivotFields;
       isHierarchical = numPivotFields >= 2;
     } else if (pivotMeta.length > 0 && pivotKeys.length > 0) {
@@ -532,40 +529,36 @@ looker.plugins.visualizations.add({
       isHierarchical = false;
     }
 
+    var keyParts = {};
+    pivotKeys.forEach(function (pk) {
+      var entry = pivotMap[pk];
+      if (hasStructuredData && entry && entry.data) {
+        keyParts[pk] = pivotFields.map(function (f) {
+          return entry.data[f.name] || { value: "", rendered: "" };
+        });
+      } else {
+        var p = self._parsePivotKey(pk);
+        if (numPivotFields > 0 && p.length > numPivotFields) p = p.slice(0, numPivotFields);
+        keyParts[pk] = p.map(function (v) { return { value: v, rendered: v }; });
+      }
+    });
+
     function getPart(pk, level) {
       if (level >= levelCount) return "";
       var entry = pivotMap[pk];
       if (entry && entry.is_total) return level === 0 ? "Total" : "";
-
-      if (hasStructuredData && entry && entry.data && pivotFields[level]) {
-        var cell = entry.data[pivotFields[level].name];
-        if (!cell) return "";
-        var val = (cell.rendered != null && cell.rendered !== "") ? cell.rendered : cell.value;
-        if (val == null || self._isNullPivot(val)) return "";
-        return String(val).trim();
-      }
-
-      var parts = self._parsePivotKey(pk);
-      var raw = parts[level] != null ? parts[level] : "";
-      return self._isNullPivot(raw) ? "" : String(raw).trim();
+      var val = self._renderedValue(keyParts[pk] && keyParts[pk][level]);
+      return (val == null || self._isNullPivot(val)) ? "" : String(val).trim();
     }
 
     function getTuple(pk, upToLevel) {
-      var entry = pivotMap[pk];
-
-      if (hasStructuredData && entry && entry.data) {
-        var tparts = [];
-        for (var l = 0; l <= upToLevel && l < levelCount; l++) {
-          if (pivotFields[l]) {
-            var cell = entry.data[pivotFields[l].name];
-            tparts.push(cell ? String(cell.value != null ? cell.value : "") : "");
-          }
-        }
-        return tparts.join("\0");
+      var parts = keyParts[pk] || [];
+      var out = [];
+      for (var l = 0; l <= upToLevel && l < levelCount; l++) {
+        var cell = parts[l];
+        out.push(cell ? String(cell.value != null ? cell.value : "") : "");
       }
-
-      var parsed = self._parsePivotKey(pk);
-      return parsed.slice(0, upToLevel + 1).join("\0");
+      return out.join("\0");
     }
 
     function groupConsecutive(arr, fn) {
@@ -679,21 +672,16 @@ looker.plugins.visualizations.add({
   },
 
   _makeTotalRow: function (label, rows, dimColCount, freeze, forEachValueCol, sumRows, formatValue) {
+    var self = this;
+    var style = { fontWeight: "bold", padding: "6px 8px", borderTop: "1px solid #ccc", borderBottom: "1px solid #eee" };
     var tr = document.createElement("tr");
-    var td = this._td({
-      fontWeight: "bold", padding: "6px 8px",
-      borderTop: "1px solid #ccc", borderBottom: "1px solid #eee"
-    });
+    var td = self._td(style);
     if (freeze) td.className = "grouped-tables-col-frozen";
     td.colSpan = dimColCount;
     td.textContent = label;
     tr.appendChild(td);
     forEachValueCol(function (m, pk) {
-      var vtd = document.createElement("td");
-      Object.assign(vtd.style, {
-        fontWeight: "bold", padding: "6px 8px", textAlign: "right",
-        borderTop: "1px solid #ccc", borderBottom: "1px solid #eee"
-      });
+      var vtd = self._td(Object.assign({}, style, { textAlign: "right" }));
       vtd.textContent = formatValue(sumRows(rows, m.name, pk));
       tr.appendChild(vtd);
     });
@@ -706,8 +694,14 @@ looker.plugins.visualizations.add({
 
   _renderHeader: function (thead, ctx) {
     var self = this;
-    var h    = ctx.hierarchy;
-    var cfg  = ctx.cfg;
+    var h   = ctx.hierarchy;
+    var cfg = ctx.cfg;
+
+    function makePivotTh(text) {
+      var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
+      th.textContent = text;
+      return th;
+    }
 
     function appendDimCells(row, rowSpan) {
       ctx.displayDims.forEach(function (dim, i) {
@@ -729,13 +723,15 @@ looker.plugins.visualizations.add({
       thead.appendChild(mRow);
     }
 
-    function displayLabel(pk) {
+    function pivotLabel(pk) {
       var raw = ctx.pivotLabels[pk] || pk;
       return self._isNullPivot(raw) ? "" : String(raw).trim();
     }
 
+    var totalHeaderRows;
+
     if (h.isHierarchical && ctx.pivotMeta.length) {
-      var totalHeaderRows = h.levelCount + (cfg.showMeasureHeaders ? 1 : 0);
+      totalHeaderRows = h.levelCount + (cfg.showMeasureHeaders ? 1 : 0);
       for (var level = 0; level < h.levelCount; level++) {
         var row = document.createElement("tr");
         if (level === 0) appendDimCells(row, totalHeaderRows);
@@ -743,40 +739,29 @@ looker.plugins.visualizations.add({
         ctx.measures.forEach(function () {
           var ki = 0;
           groups.forEach(function (g) {
-            var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
+            var th = makePivotTh(h.getPart(ctx.pivotKeys[ki], level));
             th.colSpan = g.count;
-            th.textContent = h.getPart(ctx.pivotKeys[ki], level);
             ki += g.count;
             row.appendChild(th);
           });
         });
         thead.appendChild(row);
       }
-      if (cfg.showMeasureHeaders) appendMeasureRow();
     } else {
-      var totalHeaderRows = 1 + (cfg.showMeasureHeaders ? 1 : 0);
+      totalHeaderRows = 1 + (cfg.showMeasureHeaders ? 1 : 0);
       var pRow = document.createElement("tr");
       appendDimCells(pRow, totalHeaderRows);
-      if (ctx.pivotMeta.length) {
-        ctx.forEachValueCol(function (_m, pk) {
-          var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
-          th.textContent = displayLabel(pk);
-          pRow.appendChild(th);
-        });
-      } else {
-        ctx.measures.forEach(function (m) {
-          var th = self._th(cfg.headerColor, { textAlign: cfg.pivotAlign });
-          th.textContent = ctx.pivotLabels[m.name] || m.name;
-          pRow.appendChild(th);
-        });
-      }
+      ctx.forEachValueCol(function (_m, pk) {
+        pRow.appendChild(makePivotTh(pivotLabel(pk)));
+      });
       thead.appendChild(pRow);
-      if (cfg.showMeasureHeaders) appendMeasureRow();
     }
+
+    if (cfg.showMeasureHeaders) appendMeasureRow();
   },
 
   // ---------------------------------------------------------------------------
-  // Freeze stylesheet (pure CSS, no inline-style loops)
+  // Freeze stylesheet
   // ---------------------------------------------------------------------------
 
   _freezeStyleSheet: function (headerColor) {
