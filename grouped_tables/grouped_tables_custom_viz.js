@@ -261,7 +261,7 @@ looker.plugins.visualizations.add({
     if (cfg.showTableTotal) {
       var ttRow = self._makeTotalRow(cfg.tableTotalLabel, data, dimColCount, cfg.freeze, forEachValueCol, sumRows, formatValue);
       ttRow.className = "grouped-tables-table-total-row";
-      ttRow.firstChild.style.borderTop = "2px solid #ccc";
+      [].forEach.call(ttRow.children, function (cell) { cell.style.borderTop = "2px solid #ccc"; });
       if (cfg.tableTotalPosition === "top") {
         if (cfg.sectionSpacing > 0) tbody.insertBefore(self._makeSpacerRow(totalColCount, cfg.sectionSpacing), tbody.firstChild);
         tbody.insertBefore(ttRow, tbody.firstChild);
