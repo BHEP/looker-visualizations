@@ -1,0 +1,173 @@
+/* YU CPS program x year summary (Report Table, not transposed).
+   Sibling of table_css/yu_cps.css — do not reuse yu_cps.css here;
+   that theme is for transposed dashboard tiles.
+
+   Looker customTheme:
+   https://cdn.jsdelivr.net/gh/BHEP/looker-visualizations@main/table_css/yu_cps_summary.css
+*/
+
+@font-face {
+  font-family: 'Noto Sans TC';
+  src: url('./fonts/noto-sans-tc-v10-latin_chinese-traditional-regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('./fonts/noto-sans-sc-v11-latin_chinese-simplified-regular.woff2') format('woff2');
+}
+
+#tooltip {
+  position: absolute;
+  width: auto;
+  height: auto;
+  padding: 5px;
+  background-color: white;
+  border-radius: 4px;
+  box-shadow: 4px 4px 10px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  font-family: sans-serif;
+  font-size: 12px;
+  z-index: 2;
+}
+
+.tooltipTable {
+  font-family: Open Sans, Helvetica, Arial, sans-serif;
+  border: 0;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.focus {
+  font-weight: bold;
+}
+
+.hidden {
+  display: none;
+}
+
+.hover {
+  background-color: #ffffbb;
+}
+
+.reportTable {
+  font-family: Calibri, sans-serif;
+  color: #000000;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: auto;
+}
+
+th.headerCell,
+.rowCell {
+  border-bottom: 1px solid #BDC3C7;
+}
+
+.reportTable tbody tr:last-child > * {
+  font-weight: bold;
+}
+
+/* Title / heading row (Report Table "Use Headings") */
+.headerCell.heading,
+.headerCell.heading.merged {
+  background-color: #ffffff !important;
+  color: #44546A !important;
+  font-weight: 700 !important;
+  font-size: 18px !important;
+  text-align: left !important;
+  vertical-align: middle !important;
+  letter-spacing: 0.01em;
+  padding: 10px 12px 8px 8px;
+  border-bottom: 2px solid #44546A !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+}
+
+/* Shared header bar */
+th.headerCell {
+  background-color: #44546A;
+  color: #ffffff !important;
+  font-weight: 600;
+  vertical-align: middle;
+  padding: 8px 10px;
+  border-left: 0;
+  border-right: 0;
+}
+
+/* Program (first column) */
+.headerCell.dimension,
+.reportTable thead tr th:first-child {
+  background-color: #44546A !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  text-align: left !important;
+  padding: 8px 12px;
+}
+
+/* Allocation year titles */
+.headerCell.pivot,
+.headerCell.pivot.merged {
+  background-color: #44546A !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center !important;
+  white-space: nowrap;
+  width: 1%;
+  border-left: 1px solid rgba(255, 255, 255, 0.28) !important;
+  border-right: 0 !important;
+  padding: 8px 8px 6px;
+}
+
+/* Spend / CPS under each year */
+.headerCell.measure,
+.headerCell.measure.calculation {
+  background-color: #5B6B82 !important;
+  color: #ffffff !important;
+  font-weight: 500;
+  font-size: 12px;
+  text-align: center !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+  padding: 6px 8px;
+}
+
+.rowCell {
+  vertical-align: middle;
+  padding: 6px 10px;
+  border-bottom: 1px solid #BDC3C7;
+}
+
+.rowCell.merged {
+  background-color: #e4ecf3 !important;
+}
+
+.nonNumeric {
+  text-align: left;
+}
+
+.numeric {
+  text-align: right;
+}
+
+.negative {
+  color: #c00000;
+}
+
+.estimate {
+  color: #6b6b6b !important;
+}
+
+.singleIndex {
+  padding-left: 15px !important;
+}
+
+.subtotal,
+.indexCell.subtotal {
+  font-style: italic !important;
+  font-weight: bold !important;
+  background-color: #DEDEDE !important;
+}
+
+.rectElem.animated {
+  font-family: Open Sans, Helvetica, Arial, sans-serif;
+  margin: 4px;
+}
