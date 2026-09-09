@@ -107,7 +107,6 @@ th.headerCell {
   background-color: #5B6B82 !important;
   color: transparent !important;
   font-size: 0 !important;
-  border-right: 2px solid #2C3E50 !important;
 }
 
 /* Row 2: put "Program" on the year row */
@@ -192,6 +191,14 @@ th.headerCell {
 
 .negative {
   color: #c00000;
+}
+
+/* YoY CPS Change (last column): positive = red (CPS up), negative = black */
+.reportTable tbody td:last-child {
+  color: #c00000;
+}
+.reportTable tbody td:last-child.negative {
+  color: #000000 !important;
 }
 
 .estimate {
