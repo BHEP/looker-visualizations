@@ -92,7 +92,7 @@ th.headerCell {
   border-right: 0;
 }
 
-/* Program (first column) */
+/* Program (first column) — match the measure-group header on row 1 */
 .headerCell.dimension,
 .reportTable thead tr th:first-child {
   background-color: #44546A !important;
@@ -102,22 +102,51 @@ th.headerCell {
   padding: 8px 12px;
 }
 
-/* Allocation year titles */
+/* Row 1: Program sits with Total Spend / CPS / YoY — same fill, hide the label */
+.reportTable thead tr:first-child th:first-child {
+  background-color: #5B6B82 !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  border-right: 2px solid #2C3E50 !important;
+}
+
+/* Row 2: put "Program" on the year row */
+.reportTable thead tr:nth-child(2) th:first-child {
+  background-color: #44546A !important;
+  font-size: 13px !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  text-align: left !important;
+}
+
+.reportTable thead tr:nth-child(2) th:first-child::after {
+  content: "Program";
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Year headers: right-align to match the numbers (inline align is often left) */
+.reportTable thead tr:nth-child(2) th:not(:first-child) {
+  text-align: right !important;
+  padding-right: 10px !important;
+}
+
 .headerCell.pivot,
 .headerCell.pivot.merged {
   background-color: #44546A !important;
   color: #ffffff !important;
   font-weight: 700;
   font-size: 13px;
-  text-align: center !important;
+  text-align: right !important;
   white-space: nowrap;
   width: 1%;
-  border-left: 1px solid rgba(255, 255, 255, 0.28) !important;
+  border-left: 0 !important;
   border-right: 0 !important;
-  padding: 8px 8px 6px;
+  padding: 8px 10px 6px;
 }
 
-/* Spend / CPS under each year */
+/* Spend / CPS / YoY group titles */
 .headerCell.measure,
 .headerCell.measure.calculation {
   background-color: #5B6B82 !important;
@@ -128,6 +157,19 @@ th.headerCell {
   border-left: 0 !important;
   border-right: 0 !important;
   padding: 6px 8px;
+}
+
+/* Vertical divider after each metric group (last year of Spend, last year of CPS).
+   4 year columns: positions 5 and 9. First header row uses merged measure cells. */
+.reportTable thead tr:first-child th.headerCell.measure {
+  border-right: 2px solid #2C3E50 !important;
+}
+
+.reportTable thead tr:nth-child(2) th:nth-child(5),
+.reportTable thead tr:nth-child(2) th:nth-child(9),
+.reportTable tbody td:nth-child(5),
+.reportTable tbody td:nth-child(9) {
+  border-right: 2px solid #2C3E50 !important;
 }
 
 .rowCell {
