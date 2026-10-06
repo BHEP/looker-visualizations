@@ -1,0 +1,9 @@
+{
+ "name": "bar_table_combo",
+ "version": "1.0.0",
+ "label": "Bar + Table",
+ "description": "Chart on top, transposed data table underneath, sharing one x-axis. Each measure or table calculation can be placed in the chart, the table, both, or hidden. Reads native Looker column chart and table settings (series colors, labels, types, y-axes, hidden fields, table theme and fonts) so they carry over when switching visualization type.",
+ "author": "sxia",
+ "main": "bar_table_custom_viz.js",
+ "icon": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB4PSI0IiB5PSI4IiB3aWR0aD0iMyIgaGVpZ2h0PSI2IiBmaWxsPSIjNjI2MjYyIi8+PHJlY3QgeD0iMTAuNSIgeT0iNCIgd2lkdGg9IjMiIGhlaWdodD0iMTAiIGZpbGw9IiM2MjYyNjIiLz48cmVjdCB4PSIxNyIgeT0iNyIgd2lkdGg9IjMiIGhlaWdodD0iNyIgZmlsbD0iIzYyNjI2MiIvPjxyZWN0IHg9IjIiIHk9IjE2IiB3aWR0aD0iMjAiIGhlaWdodD0iMiIgZmlsbD0iIzYyNjI2MiIvPjxyZWN0IHg9IjIiIHk9IjIwIiB3aWR0aD0iMjAiIGhlaWdodD0iMiIgZmlsbD0iIzYyNjI2MiIvPjwvc3ZnPg=="
+}
