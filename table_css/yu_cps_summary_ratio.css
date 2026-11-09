@@ -241,8 +241,8 @@ th.headerCell {
   background-color: #DEDEDE !important;
 }
 
-/* Fifth- and fourth-from-last: bold italic, with a blank gap after each
-   (before the fourth-from-last, and before the final three-row section). */
+/* Fifth- and fourth-from-last (Total CPS, SJV): bold italic.
+   No rule between them; normal row spacing. */
 .reportTable tbody tr:nth-last-child(5) > *,
 .reportTable tbody tr:nth-last-child(4) > * {
   font-weight: 700 !important;
@@ -250,16 +250,7 @@ th.headerCell {
 }
 
 .reportTable tbody tr:nth-last-child(5) > * {
-  padding-bottom: 18px !important;
-}
-
-.reportTable tbody tr:nth-last-child(4) > * {
-  padding-top: 18px !important;
-  padding-bottom: 18px !important;
-}
-
-.reportTable tbody tr:nth-last-child(3) > * {
-  padding-top: 18px !important;
+  border-bottom: none !important;
 }
 
 /* Last three rows: one section. Regular type, no rules between them,
