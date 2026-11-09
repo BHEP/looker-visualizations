@@ -278,6 +278,35 @@ th.headerCell {
   border-bottom: none !important;
 }
 
+/* Last three labels are long. Keep them on one line and let the words
+   paint across the empty cells to the right. Width stays with the
+   shorter labels above, so that column does not grow. */
+.reportTable tbody tr:nth-last-child(n+4) > td:first-child {
+  white-space: nowrap !important;
+}
+
+.reportTable tbody tr:nth-last-child(-n+3) > td:first-child {
+  white-space: nowrap !important;
+  overflow: visible !important;
+  width: 0 !important;
+  max-width: 0 !important;
+  position: relative;
+  z-index: 2;
+  background-color: transparent !important;
+}
+
+.reportTable tbody tr:nth-last-child(-n+3) > td:not(:first-child):not(.numeric) {
+  background-color: transparent !important;
+  position: relative;
+  z-index: 0;
+}
+
+.reportTable tbody tr:nth-last-child(-n+3) > td.numeric {
+  position: relative;
+  z-index: 3;
+  background-color: #ffffff !important;
+}
+
 .rectElem.animated {
   font-family: Open Sans,Helvetica,Arial,sans-serif;
   margin: 4px;
